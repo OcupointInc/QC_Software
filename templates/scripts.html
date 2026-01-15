@@ -158,10 +158,10 @@
     // --- UI Setup (Simplified to CH1-CH8) ---
     const cbContainer = document.getElementById('checkboxes');
     
-    RF_CHANNELS.forEach(chIdx => {
-        const label = document.createElement('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
+        RF_CHANNELS.forEach(chIdx => {
+            const label = document.createElement('label');
+            label.style.color = getRandomColor(chIdx);
+            const box = document.createElement('input');        box.type = 'checkbox';
         box.value = chIdx; // Value is 0, 1, 2...
 
         // Default: Check Channel 1 (index 0)
@@ -577,11 +577,12 @@
                         // Format frequency with 3 decimal places
                         const freqStr = peak.freqMHz.toFixed(3);
                         const chLabel = getChannelLabel(i - 1); // Convert 1-based to 0-based index
+                        const color = getRandomColor(i - 1);
 
                         html += `
                         <div class="peak-row">
-                            <span class="peak-ch">${chLabel}</span>
-                            <span class="peak-db">${peak.db} dB</span>
+                            <span class="peak-ch" style="color: ${color}">${chLabel}</span>
+                            <span class="peak-db">${peak.db.toFixed(2)} dB</span>
                             <span class="peak-bin">${freqStr} MHz</span>
                         </div>`;
                     }
