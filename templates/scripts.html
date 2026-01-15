@@ -454,108 +454,304 @@
             }, dataFFT, document.getElementById('chart-fft'));
         }
     }
-    
-    // ...
+    // --- FFT Implementation (Simple Radix-2) ---
+    class SimpleFFT {
+        constructor(size) {
+            this.size = size;
+            this.reverseTable = new Uint32Array(size);
+            let limit = 1;
+            let bit = size >> 1;
+            while (limit < size) {
+                for (let i = 0; i < limit; i++) {
+                    this.reverseTable[i + limit] = this.reverseTable[i] + bit;
+                }
+                limit <<= 1;
+                bit >>= 1;
+            }
+
+            this.sinTable = new Float64Array(size);
+            this.cosTable = new Float64Array(size);
+            for (let i = 0; i < size; i++) {
+                this.sinTable[i] = Math.sin(-2 * Math.PI * i / size);
+                this.cosTable[i] = Math.cos(-2 * Math.PI * i / size);
+            }
+            
+            // Pre-calculate Window (Blackman)
+            this.window = new Float64Array(size);
+            this.windowSum = 0;
+            for(let i=0; i<size; i++) {
+                this.window[i] = 0.42 - 0.5*Math.cos(2*Math.PI*i/(size-1)) + 0.08*Math.cos(4*Math.PI*i/(size-1));
+                this.windowSum += this.window[i];
+            }
+        }
+
+        transform(real, imag) {
+            // Bit-reverse copy
+            const n = this.size;
+            const rev = this.reverseTable;
+            const r = new Float64Array(n);
+            const i = new Float64Array(n);
+
+            for(let j=0; j<n; j++) {
+                let k = rev[j];
+                // Apply window during copy
+                r[j] = real[k] * this.window[k];
+                i[j] = imag[k] * this.window[k];
+            }
+
+            // Cooley-Tukey
+            let halfSize = 1;
+            while (halfSize < n) {
+                const phaseStep = n / (halfSize * 2);
+                for (let k = 0; k < halfSize; k++) {
+                    const phase = k * phaseStep; // index into sin/cos table
+                    // phase is integer here because table is size N
+                    // Wait, table size is N. phaseStep = N/2, N/4...
+                    // k goes 0..halfSize-1. k*phaseStep goes 0..N/2-something.
+                    // Correct index is k * (n / (halfSize*2)) -> k * n / size
+                    const tableIdx = k * (n / (halfSize * 2));
+                    
+                    const c = this.cosTable[tableIdx];
+                    const s = this.sinTable[tableIdx];
+
+                    for (let j = k; j < n; j += halfSize * 2) {
+                        const next = j + halfSize;
+                        const tr = r[next] * c - i[next] * s;
+                        const ti = r[next] * s + i[next] * c;
+
+                        r[next] = r[j] - tr;
+                        i[next] = i[j] - ti;
+                        r[j] = r[j] + tr;
+                        i[j] = i[j] + ti;
+                    }
+                }
+                halfSize <<= 1;
+            }
+            return { real: r, imag: i };
+        }
+        
+        calculateDBm(real, imag) {
+            const out = new Float64Array(this.size);
+            const half = this.size / 2;
+            const fullScaleAmp = 2048.0;
+            const fullScaleDBm = 3.9;
+            const ref = fullScaleAmp * this.windowSum;
+            
+            for(let i=0; i<this.size; i++) {
+                // FFT Shift: i maps to (i + half) % size
+                const idx = (i + half) % this.size;
+                const mag = Math.sqrt(real[idx]*real[idx] + imag[idx]*imag[idx]);
+                
+                if (mag > 0) {
+                    out[i] = 20 * Math.log10(mag / ref) + fullScaleDBm;
+                } else {
+                    out[i] = -150.0;
+                }
+            }
+            return out;
+        }
+    }
+
+    let fftEngine = null;
+
+    // Performance Stats
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+    let lastFpsUpdate = 0;
+    let accumulatedProcessTime = 0;
+    let accumulatedFFTTime = 0;
 
     function parseAndPlot(arrayBuffer) {
+        const startTotal = performance.now();
+        
+        // Calculate FPS
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsUpdate >= 1000) {
+            const fps = frameCount * 1000 / (now - lastFpsUpdate);
+            document.getElementById('perfFPS').innerText = fps.toFixed(1);
+            
+            // Average times
+            const avgProcess = accumulatedProcessTime / frameCount;
+            const avgFFT = accumulatedFFTTime / frameCount;
+            document.getElementById('perfProcess').innerText = avgProcess.toFixed(2) + " ms";
+            document.getElementById('perfFFT').innerText = avgFFT.toFixed(2) + " ms";
+
+            // Reset
+            frameCount = 0;
+            lastFpsUpdate = now;
+            accumulatedProcessTime = 0;
+            accumulatedFFTTime = 0;
+        }
+
         const view = new DataView(arrayBuffer);
         let offset = 0;
-        const BYTES_TIME = SAMPLE_SIZE * 2;
-        const BYTES_FFT = FFT_SIZE * 2; 
-
-        // Object to store peaks for each channel (only for complex)
-        let channelPeaks = {};
-
+        
+        // We receive raw I/Q channels. Packet structure: Header (1 byte) + Data (2 * N bytes).
+        // N is variable now (samplesNeeded from server).
+        // We need to parse until end of buffer.
+        
+        // Buffers for I and Q channels to hold the current frame's data
+        // Reset them? No, we just read them.
+        
+        // 8 Channels max
+        let channelDataI = new Array(8).fill(null);
+        let channelDataQ = new Array(8).fill(null);
+        
         while (offset < arrayBuffer.byteLength) {
             if (offset + 1 > arrayBuffer.byteLength) break;
             const headerID = view.getUint8(offset);
             offset += 1;
+            
+            // Header: 0..15
+            // Ch = header >> 1. Component = header & 1 (0=I, 1=Q)
+            const ch = headerID >> 1;
+            const isQ = (headerID & 1) === 1;
+            
+            // Determine length. We assume the rest of the buffer is divided equally? 
+            // Or we check how many bytes are left?
+            // Actually, the protocol streams multiple chunks.
+            // But wait, the server code does:
+            // for ch: append header, append data.
+            // So we know the data length? The server sends `samplesNeeded`.
+            // But the client doesn't know `samplesNeeded` implicitly unless we infer or fix it.
+            // However, previous code assumed fixed BYTES_TIME or BYTES_FFT.
+            // Now `samplesNeeded` depends on FFT_SIZE.
+            // The client knows FFT_SIZE.
+            // Let's assume the server sent `max(SAMPLE_SIZE, FFT_SIZE)` points.
+            // Actually, server sends `samplesNeeded`.
+            
+            // NOTE: Robust parsing would need a length header. 
+            // But since we control both, we know the Server uses `samplesNeeded`.
+            // Client's `FFT_SIZE` should match Server's.
+            // Let's rely on that.
+            
+            const points = FFT_SIZE >= SAMPLE_SIZE ? FFT_SIZE : SAMPLE_SIZE;
+            const bytesLen = points * 2;
+            
+            if (offset + bytesLen <= arrayBuffer.byteLength) {
+                const slice = arrayBuffer.slice(offset, offset + bytesLen);
+                const arr = new Int16Array(slice);
+                
+                if (ch < 8) {
+                    if (isQ) channelDataQ[ch] = arr;
+                    else channelDataI[ch] = arr;
+                }
+                offset += bytesLen;
+            } else {
+                // Not enough bytes? Break.
+                break;
+            }
+        }
+        
+        // Update Time Plots
+        if (uplotTime) {
+            // Need to map channelDataI/Q to dataTime array
+            // dataTime[0] is x-axis (already set)
+            // indices: 
+            // I0->1, Q0->2, I1->3, Q1->4 ...
+            // Component Name Map: I0, Q0, I1, Q1 ... 
+            
+            for(let ch=0; ch<8; ch++) {
+                if (channelDataI[ch]) {
+                    // Take first SAMPLE_SIZE points
+                    dataTime[ch*2 + 1] = channelDataI[ch].subarray(0, SAMPLE_SIZE);
+                }
+                if (channelDataQ[ch]) {
+                    dataTime[ch*2 + 2] = channelDataQ[ch].subarray(0, SAMPLE_SIZE);
+                }
+            }
+            uplotTime.setData(dataTime);
+        }
+        
+        // Update FFT Plots
+        let startFFT = performance.now(); // Start FFT timer
+        if (uplotFFT) {
+            // Check Engine
+            if (!fftEngine || fftEngine.size !== FFT_SIZE) {
+                fftEngine = new SimpleFFT(FFT_SIZE);
+            }
+            
+            const fftComplex = document.getElementById('fftComplex') ? document.getElementById('fftComplex').checked : true;
+            const fftI = document.getElementById('fftI') ? document.getElementById('fftI').checked : false;
+            const fftQ = document.getElementById('fftQ') ? document.getElementById('fftQ').checked : false;
 
-            if (headerID < 128) {
-                // Time Domain
-                if (uplotTime && offset + BYTES_TIME <= arrayBuffer.byteLength) {
-                    const slice = arrayBuffer.slice(offset, offset + BYTES_TIME);
-                    dataTime[headerID + 1] = new Int16Array(slice);
-                    offset += BYTES_TIME;
-                } else offset += BYTES_TIME;
-            } 
-            else if (headerID >= 128 && headerID < 136) {
-                // Complex FFT (128-135)
-                const rfCh = headerID - 128;
-                if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
-                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
-                    const fftArray = new Int16Array(slice);
-                    dataFFT[rfCh + 1] = fftArray; // Indices 1-8
-
-                    // Peak Tracking for Complex only
+            let channelPeaks = {};
+            
+            for(let ch=0; ch<8; ch++) {
+                const iData = channelDataI[ch];
+                const qData = channelDataQ[ch];
+                
+                // Only process if we have data
+                if (!iData && !qData) continue;
+                
+                // Prepare inputs (pad with 0 if missing)
+                // We need Float64 for FFT
+                const iIn = new Float64Array(FFT_SIZE);
+                const qIn = new Float64Array(FFT_SIZE);
+                
+                if (iData) {
+                    for(let k=0; k<FFT_SIZE && k<iData.length; k++) iIn[k] = iData[k];
+                }
+                if (qData) {
+                    for(let k=0; k<FFT_SIZE && k<qData.length; k++) qIn[k] = qData[k];
+                }
+                
+                // 1. Complex FFT: I + jQ
+                if (fftComplex) {
+                    const res = fftEngine.transform(iIn, qIn);
+                    const db = fftEngine.calculateDBm(res.real, res.imag);
+                    
+                    // Update trace (Indices 1-8 are Complex traces)
+                    dataFFT[ch + 1] = db;
+                    
+                    // Peak Tracking
                     if (peakTrackingEnabled) {
                         let localMax = -9999;
                         let localIdx = 0;
-                        for (let i = 0; i < fftArray.length; i++) {
-                            if (fftArray[i] > localMax) {
-                                localMax = fftArray[i];
-                                localIdx = i;
+                        for(let k=0; k<db.length; k++) {
+                            if(db[k] > localMax) {
+                                localMax = db[k];
+                                localIdx = k;
                             }
                         }
-
-                        // --- UPDATE PEAK MARKER ---
-                        // Indices 25-32 for peaks (25 = Ch0 Peak, 1 + 24)
-                        const peakSeriesIdx = 25 + rfCh;
                         
+                        // Peaks are indices 25-32
                         const markerArr = new Array(FFT_SIZE).fill(null);
                         markerArr[localIdx] = localMax;
-                        dataFFT[peakSeriesIdx] = markerArr;
-
-                        // Update the Green Label info
+                        dataFFT[25 + ch] = markerArr;
+                        
                         const bin = localIdx - (FFT_SIZE / 2);
                         const freqMHz = CENTER_FREQ_MHZ + (bin * FREQ_RES_MHZ);
-                        channelPeaks[rfCh + 1] = {
-                            db: localMax,
-                            freqMHz: freqMHz
-                        };
+                        channelPeaks[ch + 1] = { db: localMax, freqMHz: freqMHz };
                     } else {
-                        // Clear markers
-                         dataFFT[25 + rfCh] = new Array(FFT_SIZE).fill(null);
+                         dataFFT[25 + ch] = new Array(FFT_SIZE).fill(null);
                     }
-                    offset += BYTES_FFT;
+                }
+                
+                // 2. I-Only FFT: I + j0
+                if (fftI) {
+                    // Reuse qIn as zeros? No, qIn might have Q data. Need zeros.
+                    const zeros = new Float64Array(FFT_SIZE);
+                    const res = fftEngine.transform(iIn, zeros);
+                    const db = fftEngine.calculateDBm(res.real, res.imag);
+                    // Indices 9-16
+                    dataFFT[9 + ch] = db;
+                }
+                
+                // 3. Q-Only FFT: Q + j0
+                if (fftQ) {
+                    const zeros = new Float64Array(FFT_SIZE);
+                    const res = fftEngine.transform(qIn, zeros);
+                    const db = fftEngine.calculateDBm(res.real, res.imag);
+                    // Indices 17-24
+                    dataFFT[17 + ch] = db;
                 }
             }
-            else if (headerID >= 136 && headerID < 144) {
-                 // I-Only FFT (136-143)
-                 const rfCh = headerID - 136;
-                 if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
-                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
-                    const fftArray = new Int16Array(slice);
-                    // Indices 9-16
-                    dataFFT[9 + rfCh] = fftArray;
-                    offset += BYTES_FFT;
-                 }
-            }
-            else if (headerID >= 144 && headerID < 152) {
-                 // Q-Only FFT (144-151)
-                 const rfCh = headerID - 144;
-                 if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
-                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
-                    const fftArray = new Int16Array(slice);
-                    // Indices 17-24
-                    dataFFT[17 + rfCh] = fftArray;
-                    offset += BYTES_FFT;
-                 }
-            }
-            else {
-                 // Unknown header, skip?
-                 // Should break or increment to avoid infinite loop if offset doesn't move
-                 break;
-            }
-        }
-
-        if(uplotTime) {
-            uplotTime.setData(dataTime);
-        }
-
-        if(uplotFFT) {
+            
             uplotFFT.setData(dataFFT);
-            // ... peak label update ...
+            
+            // Update Labels
             const labelEl = document.getElementById('peak-label');
             if (peakTrackingEnabled) {
                 let html = `<div style="color:#aaa; font-size:11px; margin-bottom:5px;">CHANNEL         POWER       FREQUENCY</div>`;
@@ -576,6 +772,8 @@
                 labelEl.innerHTML = html;
             }
         }
+        accumulatedFFTTime += (performance.now() - startFFT);
+        accumulatedProcessTime += (performance.now() - startTotal);
     }
 
     // Fetch RF configuration from backend

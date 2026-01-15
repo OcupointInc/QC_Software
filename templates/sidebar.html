@@ -59,6 +59,21 @@
                 <button id="peakToggle" onclick="togglePeakTracking()" style="background: #555; color: white;">Enable Peak Tracking</button>
             </div>
             
+            <div class="control-group" style="background: #222; padding: 5px; border-radius: 4px; font-size: 11px; color: #aaa;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Client FPS:</span>
+                    <span id="perfFPS" style="color: #fff;">--</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Process Time:</span>
+                    <span id="perfProcess" style="color: #fff;">-- ms</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>FFT Time:</span>
+                    <span id="perfFFT" style="color: #fff;">-- ms</span>
+                </div>
+            </div>
+
             <hr>
             <label style="font-weight: bold; font-size: 13px;">Active Channels</label>
             <div id="checkboxes"></div>

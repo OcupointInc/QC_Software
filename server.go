@@ -180,7 +180,6 @@ func streamData(conn *websocket.Conn, devicePath string) {
 		fftSize := serverState.FFTSize
 		mode := serverState.StreamMode
 		channels := serverState.Channels
-		fftTypes := serverState.FFTTypes
 		replayMode := serverState.ReplayMode
 		replayData := serverState.ReplayData
 		streamingEnabled := serverState.StreamingEnabled
@@ -315,8 +314,9 @@ func streamData(conn *websocket.Conn, devicePath string) {
 			}
 		}
 
-		// Send raw time-domain data if requested
-		if mode == "raw" || mode == "both" {
+		// Send raw time-domain data (Client will do FFT if needed)
+		// We send whatever we read (samplesNeeded), which is based on FFTSize
+		if mode == "raw" || mode == "fft" || mode == "both" {
 			for ch := 0; ch < numChannels; ch++ {
 				if !activeChannels[ch] {
 					continue
@@ -324,7 +324,7 @@ func streamData(conn *websocket.Conn, devicePath string) {
 				// I component (header 0-7 for I0-I7)
 				iHeader := byte(ch * 2)
 				outBuf = append(outBuf, iHeader)
-				for s := 0; s < sampleSize && s < len(channelI[ch]); s++ {
+				for s := 0; s < samplesNeeded && s < len(channelI[ch]); s++ {
 					b := make([]byte, 2)
 					binary.LittleEndian.PutUint16(b, uint16(channelI[ch][s]))
 					outBuf = append(outBuf, b...)
@@ -333,94 +333,10 @@ func streamData(conn *websocket.Conn, devicePath string) {
 				// Q component (header 1, 3, 5... for Q0-Q7)
 				qHeader := byte(ch*2 + 1)
 				outBuf = append(outBuf, qHeader)
-				for s := 0; s < sampleSize && s < len(channelQ[ch]); s++ {
+				for s := 0; s < samplesNeeded && s < len(channelQ[ch]); s++ {
 					b := make([]byte, 2)
 					binary.LittleEndian.PutUint16(b, uint16(channelQ[ch][s]))
 					outBuf = append(outBuf, b...)
-				}
-			}
-		}
-
-		// Send FFT data if requested
-		if mode == "fft" || mode == "both" {
-			// Determine enabled FFTs
-			doComplex, doI, doQ := false, false, false
-			if len(fftTypes) == 0 {
-				doComplex = true // Default
-			} else {
-				for _, t := range fftTypes {
-					switch t {
-					case "complex":
-						doComplex = true
-					case "i":
-						doI = true
-					case "q":
-						doQ = true
-					}
-				}
-			}
-
-			zeros := make([]int16, fftSize)
-
-			for ch := 0; ch < numChannels; ch++ {
-				if !activeChannels[ch] {
-					continue
-				}
-
-				if doComplex {
-					// Compute FFT for this channel
-					fftResult := computeFFT(channelI[ch][:fftSize], channelQ[ch][:fftSize], fftSize)
-
-					// DEBUG: Print peak info for Ch0 occasionally to verify DSP
-					if ch == 0 {
-						maxVal := -200.0
-						maxBin := 0
-						for i, v := range fftResult {
-							if v > maxVal {
-								maxVal = v
-								maxBin = i
-							}
-						}
-						log.Printf("[DEBUG] Ch0 FFT Peak: %.2f dBm at Bin %d", maxVal, maxBin)
-					}
-
-					// FFT header is 128 + channel number
-					fftHeader := byte(128 + ch)
-					outBuf = append(outBuf, fftHeader)
-					for _, val := range fftResult {
-						b := make([]byte, 2)
-						// Cast int16 directly - this preserves negative values correctly
-						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
-						outBuf = append(outBuf, b...)
-					}
-				}
-
-				if doI {
-					// Compute FFT for I component (Real input, Imaginary zero)
-					fftResult := computeFFT(channelI[ch][:fftSize], zeros, fftSize)
-
-					// FFT header for I is 136 + channel number
-					fftHeader := byte(136 + ch)
-					outBuf = append(outBuf, fftHeader)
-					for _, val := range fftResult {
-						b := make([]byte, 2)
-						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
-						outBuf = append(outBuf, b...)
-					}
-				}
-
-				if doQ {
-					// Compute FFT for Q component (Real input, Imaginary zero)
-					fftResult := computeFFT(channelQ[ch][:fftSize], zeros, fftSize)
-
-					// FFT header for Q is 144 + channel number
-					fftHeader := byte(144 + ch)
-					outBuf = append(outBuf, fftHeader)
-					for _, val := range fftResult {
-						b := make([]byte, 2)
-						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
-						outBuf = append(outBuf, b...)
-					}
 				}
 			}
 		}
