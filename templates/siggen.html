@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+<head>
+    <title>Signal Generator Control</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        .pulse-green {
+            animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse-green {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            }
+            50% {
+                box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+            }
+        }
+    </style>
+</head>
+<body class="bg-base-300 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-4xl font-bold text-primary mb-2">Signal Generator Control</h1>
+            <a href="/" class="link link-primary text-sm">← Back to RF Stream Viewer</a>
+        </div>
+
+        <!-- Alert Messages -->
+        <div id="errorMsg" class="alert alert-error mb-4 hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span id="errorText"></span>
+        </div>
+
+        <div id="successMsg" class="alert alert-success mb-4 hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span id="successText"></span>
+        </div>
+
+        <!-- Current State Card -->
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <h2 class="card-title text-2xl mb-4">
+                    Current State
+                    <div class="badge badge-primary badge-sm ml-2">Live</div>
+                </h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Frequency -->
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Frequency</div>
+                        <div class="stat-value text-success text-2xl" id="currentFreq">-- MHz</div>
+                    </div>
+
+                    <!-- Power -->
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">Power</div>
+                        <div class="stat-value text-warning text-2xl" id="currentPower">-- dBm</div>
+                    </div>
+
+                    <!-- RF Output -->
+                    <div class="stat bg-base-200 rounded-lg">
+                        <div class="stat-title">RF Output</div>
+                        <div class="stat-value text-2xl flex items-center gap-2">
+                            <span id="currentOutput">--</span>
+                            <span class="relative flex h-3 w-3">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 hidden" id="outputPing"></span>
+                                <span class="relative inline-flex rounded-full h-3 w-3" id="outputIndicator"></span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls Card -->
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <h2 class="card-title text-2xl mb-4">Controls</h2>
+
+                <!-- Frequency Control -->
+                <div class="form-control w-full mb-4">
+                    <label class="label">
+                        <span class="label-text font-semibold">Frequency (MHz)</span>
+                    </label>
+                    <div class="join w-full">
+                        <input
+                            type="number"
+                            id="freqInput"
+                            placeholder="Enter frequency"
+                            step="0.1"
+                            class="input input-bordered join-item flex-1" />
+                        <button class="btn btn-primary join-item" onclick="setFrequency()">
+                            Set Frequency
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Power Control -->
+                <div class="form-control w-full mb-4">
+                    <label class="label">
+                        <span class="label-text font-semibold">Power (dBm)</span>
+                    </label>
+                    <div class="join w-full">
+                        <input
+                            type="number"
+                            id="powerInput"
+                            placeholder="Enter power"
+                            step="0.1"
+                            class="input input-bordered join-item flex-1" />
+                        <button class="btn btn-primary join-item" onclick="setPower()">
+                            Set Power
+                        </button>
+                    </div>
+                </div>
+
+                <!-- RF Output Control -->
+                <div class="form-control w-full">
+                    <label class="label">
+                        <span class="label-text font-semibold">RF Output Control</span>
+                    </label>
+                    <div class="flex gap-3">
+                        <button class="btn btn-success flex-1" onclick="setOutput(true)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clip-rule="evenodd" />
+                            </svg>
+                            Turn ON
+                        </button>
+                        <button class="btn btn-error flex-1" onclick="setOutput(false)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                            </svg>
+                            Turn OFF
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PSU Control Card -->
+        <div class="card bg-base-100 shadow-xl mb-6">
+            <div class="card-body">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title text-2xl">
+                        Power Supply Unit (PSU)
+                        <div class="badge badge-info badge-sm ml-2">2 Outputs</div>
+                    </h2>
+                    <button class="btn btn-sm btn-outline btn-primary" onclick="refreshPSUState(true)">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                        </svg>
+                        Refresh PSU
+                    </button>
+                </div>
+
+                <!-- PSU Output 1 -->
+                <div class="collapse collapse-arrow bg-base-200 mb-3">
+                    <input type="checkbox" checked />
+                    <div class="collapse-title text-xl font-medium flex items-center justify-between">
+                        <div>
+                            Output 1
+                            <span class="badge badge-sm ml-2" id="psu1Badge">OFF</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="text-sm text-base-content/70">
+                                <div id="psu1Status">Set: -- V / -- A</div>
+                                <div id="psu1Measured" class="font-semibold text-success">Actual: -- V / -- A</div>
+                            </div>
+                            <div class="flex gap-2" onclick="event.stopPropagation()">
+                                <button class="btn btn-success btn-xs" onclick="setPSUOutput(1, true)">ON</button>
+                                <button class="btn btn-error btn-xs" onclick="setPSUOutput(1, false)">OFF</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                            <!-- Voltage Control -->
+                            <div class="form-control w-full">
+                                <label class="label">
+                                    <span class="label-text font-semibold">Voltage (V)</span>
+                                </label>
+                                <div class="join w-full">
+                                    <input
+                                        type="number"
+                                        id="psu1VoltageInput"
+                                        placeholder="Enter voltage"
+                                        step="0.01"
+                                        class="input input-bordered join-item flex-1" />
+                                    <button class="btn btn-primary join-item" onclick="setPSUVoltage(1)">
+                                        Set
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Current Limit Control -->
+                            <div class="form-control w-full">
+                                <label class="label">
+                                    <span class="label-text font-semibold">Current Limit (A)</span>
+                                </label>
+                                <div class="join w-full">
+                                    <input
+                                        type="number"
+                                        id="psu1CurrentInput"
+                                        placeholder="Enter current limit"
+                                        step="0.01"
+                                        class="input input-bordered join-item flex-1" />
+                                    <button class="btn btn-primary join-item" onclick="setPSUCurrent(1)">
+                                        Set
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Output Enable/Disable -->
+                        <div class="form-control w-full mt-3">
+                            <div class="flex gap-3">
+                                <button class="btn btn-success flex-1" onclick="setPSUOutput(1, true)">Enable Output</button>
+                                <button class="btn btn-error flex-1" onclick="setPSUOutput(1, false)">Disable Output</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PSU Output 2 -->
+                <div class="collapse collapse-arrow bg-base-200 mb-3">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-xl font-medium flex items-center justify-between">
+                        <div>
+                            Output 2
+                            <span class="badge badge-sm ml-2" id="psu2Badge">OFF</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="text-sm text-base-content/70">
+                                <div id="psu2Status">Set: -- V / -- A</div>
+                                <div id="psu2Measured" class="font-semibold text-success">Actual: -- V / -- A</div>
+                            </div>
+                            <div class="flex gap-2" onclick="event.stopPropagation()">
+                                <button class="btn btn-success btn-xs" onclick="setPSUOutput(2, true)">ON</button>
+                                <button class="btn btn-error btn-xs" onclick="setPSUOutput(2, false)">OFF</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                            <!-- Voltage Control -->
+                            <div class="form-control w-full">
+                                <label class="label">
+                                    <span class="label-text font-semibold">Voltage (V)</span>
+                                </label>
+                                <div class="join w-full">
+                                    <input
+                                        type="number"
+                                        id="psu2VoltageInput"
+                                        placeholder="Enter voltage"
+                                        step="0.01"
+                                        class="input input-bordered join-item flex-1" />
+                                    <button class="btn btn-primary join-item" onclick="setPSUVoltage(2)">
+                                        Set
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Current Limit Control -->
+                            <div class="form-control w-full">
+                                <label class="label">
+                                    <span class="label-text font-semibold">Current Limit (A)</span>
+                                </label>
+                                <div class="join w-full">
+                                    <input
+                                        type="number"
+                                        id="psu2CurrentInput"
+                                        placeholder="Enter current limit"
+                                        step="0.01"
+                                        class="input input-bordered join-item flex-1" />
+                                    <button class="btn btn-primary join-item" onclick="setPSUCurrent(2)">
+                                        Set
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Output Enable/Disable -->
+                        <div class="form-control w-full mt-3">
+                            <div class="flex gap-3">
+                                <button class="btn btn-success flex-1" onclick="setPSUOutput(2, true)">Enable Output</button>
+                                <button class="btn btn-error flex-1" onclick="setPSUOutput(2, false)">Disable Output</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Settings Card -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <button class="btn btn-outline btn-primary" onclick="refreshState()">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                        </svg>
+                        Refresh State
+                    </button>
+
+                    <div class="form-control">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text">Auto-refresh (5s)</span>
+                            <input type="checkbox" id="autoRefresh" class="toggle toggle-primary" onchange="toggleAutoRefresh()" checked />
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+
+        // Show error message
+        function showError(message) {
+            const errorEl = document.getElementById('errorMsg');
+            const errorText = document.getElementById('errorText');
+            errorText.textContent = message;
+            errorEl.classList.remove('hidden');
+            setTimeout(() => {
+                errorEl.classList.add('hidden');
+            }, 5000);
+        }
+
+        // Show success message
+        function showSuccess(message) {
+            const successEl = document.getElementById('successMsg');
+            const successText = document.getElementById('successText');
+            successText.textContent = message;
+            successEl.classList.remove('hidden');
+            setTimeout(() => {
+                successEl.classList.add('hidden');
+            }, 3000);
+        }
+
+        // Fetch PSU state only
+        async function refreshPSUState(showMessage = false) {
+            try {
+                const psuResponse = await fetch('/api/psu/state');
+                const psuData = await psuResponse.json();
+
+                if (psuResponse.ok && psuData.outputs) {
+                    psuData.outputs.forEach((output, index) => {
+                        const outputNum = index + 1;
+                        const statusEl = document.getElementById(`psu${outputNum}Status`);
+                        const measuredEl = document.getElementById(`psu${outputNum}Measured`);
+                        const badgeEl = document.getElementById(`psu${outputNum}Badge`);
+
+                        // Update set values
+                        if (statusEl) {
+                            statusEl.textContent = `Set: ${output.voltage.toFixed(2)} V / ${output.current_limit.toFixed(2)} A`;
+                        }
+
+                        // Update measured values (actual draw)
+                        if (measuredEl) {
+                            measuredEl.textContent = `Actual: ${output.measured_voltage.toFixed(2)} V / ${output.measured_current.toFixed(3)} A`;
+
+                            // Color code based on whether output is enabled
+                            if (output.enabled) {
+                                measuredEl.className = 'font-semibold text-success';
+                            } else {
+                                measuredEl.className = 'font-semibold text-base-content/40';
+                            }
+                        }
+
+                        // Update ON/OFF badge
+                        if (badgeEl) {
+                            if (output.enabled) {
+                                badgeEl.textContent = 'ON';
+                                badgeEl.className = 'badge badge-success badge-sm ml-2';
+                            } else {
+                                badgeEl.textContent = 'OFF';
+                                badgeEl.className = 'badge badge-sm ml-2';
+                            }
+                        }
+
+                        // Update input placeholders
+                        const voltageInput = document.getElementById(`psu${outputNum}VoltageInput`);
+                        const currentInput = document.getElementById(`psu${outputNum}CurrentInput`);
+                        if (voltageInput) {
+                            voltageInput.placeholder = `Current: ${output.voltage.toFixed(2)} V`;
+                        }
+                        if (currentInput) {
+                            currentInput.placeholder = `Current: ${output.current_limit.toFixed(2)} A`;
+                        }
+                    });
+                    if (showMessage) {
+                        showSuccess('PSU state refreshed');
+                    }
+                }
+            } catch (error) {
+                if (showMessage) {
+                    showError('PSU not available: ' + error.message);
+                }
+            }
+        }
+
+        // Fetch current state from server
+        async function refreshState() {
+            try {
+                const response = await fetch('/api/siggen/state');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to fetch state');
+                    return;
+                }
+
+                // Update display
+                document.getElementById('currentFreq').textContent = `${data.freq_mhz.toFixed(1)} MHz`;
+                document.getElementById('currentPower').textContent = `${data.power_dbm.toFixed(1)} dBm`;
+                document.getElementById('currentOutput').textContent = data.rf_output ? 'ON' : 'OFF';
+
+                // Update indicator
+                const indicator = document.getElementById('outputIndicator');
+                const ping = document.getElementById('outputPing');
+                if (data.rf_output) {
+                    indicator.className = 'relative inline-flex rounded-full h-3 w-3 bg-success';
+                    ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75';
+                } else {
+                    indicator.className = 'relative inline-flex rounded-full h-3 w-3 bg-base-content opacity-30';
+                    ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 hidden';
+                }
+
+                // Pre-fill input fields with current values
+                document.getElementById('freqInput').placeholder = `Current: ${data.freq_mhz.toFixed(1)} MHz`;
+                document.getElementById('powerInput').placeholder = `Current: ${data.power_dbm.toFixed(1)} dBm`;
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+
+            // Also refresh PSU state
+            await refreshPSUState();
+        }
+
+        // Set frequency
+        async function setFrequency() {
+            const freqInput = document.getElementById('freqInput');
+            const freq = parseFloat(freqInput.value);
+
+            if (isNaN(freq)) {
+                showError('Please enter a valid frequency value');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/siggen/frequency', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ freq_mhz: freq })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set frequency');
+                    return;
+                }
+
+                showSuccess(`Frequency set to ${data.freq_mhz.toFixed(1)} MHz`);
+                freqInput.value = '';
+                refreshState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        // Set power
+        async function setPower() {
+            const powerInput = document.getElementById('powerInput');
+            const power = parseFloat(powerInput.value);
+
+            if (isNaN(power)) {
+                showError('Please enter a valid power value');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/siggen/power', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ power_dbm: power })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set power');
+                    return;
+                }
+
+                showSuccess(`Power set to ${data.power_dbm.toFixed(1)} dBm`);
+                powerInput.value = '';
+                refreshState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        // Set RF output
+        async function setOutput(enabled) {
+            try {
+                const response = await fetch('/api/siggen/output', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set output');
+                    return;
+                }
+
+                showSuccess(`RF Output turned ${enabled ? 'ON' : 'OFF'}`);
+                refreshState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        // Toggle auto-refresh
+        function toggleAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(refreshState, 5000);
+            } else {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+            }
+        }
+
+        // PSU Control Functions
+        async function setPSUVoltage(output) {
+            const voltageInput = document.getElementById(`psu${output}VoltageInput`);
+            const voltage = parseFloat(voltageInput.value);
+
+            if (isNaN(voltage)) {
+                showError('Please enter a valid voltage value');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/psu/output/${output}/voltage`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ voltage: voltage })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set voltage');
+                    return;
+                }
+
+                showSuccess(`Output ${output} voltage set to ${voltage.toFixed(2)} V`);
+                voltageInput.value = '';
+                await refreshPSUState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        async function setPSUCurrent(output) {
+            const currentInput = document.getElementById(`psu${output}CurrentInput`);
+            const current = parseFloat(currentInput.value);
+
+            if (isNaN(current)) {
+                showError('Please enter a valid current value');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/psu/output/${output}/current`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ current_limit: current })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set current limit');
+                    return;
+                }
+
+                showSuccess(`Output ${output} current limit set to ${current.toFixed(2)} A`);
+                currentInput.value = '';
+                await refreshPSUState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        async function setPSUOutput(output, enabled) {
+            try {
+                const response = await fetch(`/api/psu/output/${output}/enable`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || 'Failed to set PSU output');
+                    return;
+                }
+
+                showSuccess(`Output ${output} ${enabled ? 'enabled' : 'disabled'}`);
+                await refreshPSUState();
+
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('freqInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') setFrequency();
+        });
+
+        document.getElementById('powerInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') setPower();
+        });
+
+        // Add Enter key handlers for PSU inputs
+        for (let i = 1; i <= 2; i++) {
+            document.getElementById(`psu${i}VoltageInput`).addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') setPSUVoltage(i);
+            });
+            document.getElementById(`psu${i}CurrentInput`).addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') setPSUCurrent(i);
+            });
+        }
+
+        // Initialize
+        refreshState();
+        toggleAutoRefresh(); // Start auto-refresh
+    </script>
+</body>
+</html>

@@ -1,0 +1,372 @@
+package main
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"golang.org/x/sys/unix"
+)
+
+// WebSocket clients
+var (
+	wsClients   = make(map[*websocket.Conn]bool)
+	wsClientsMu sync.RWMutex
+)
+
+// runServer starts the WebSocket server with embedded HTML
+func runServer(port int, devicePath string, targetSize int) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin:  func(r *http.Request) bool { return true },
+		ReadBufferSize:  1024,
+		WriteBufferSize: 65536,
+	}
+
+	// Serve embedded HTML files
+	templatesContent, _ := fs.Sub(templatesFS, "templates")
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			tmpl, err := template.ParseFS(templatesContent, "*.html")
+			if err != nil {
+				http.Error(w, "Template error: "+err.Error(), 500)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html")
+			tmpl.ExecuteTemplate(w, "index.html", nil)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	http.HandleFunc("/siggen", func(w http.ResponseWriter, r *http.Request) {
+		data, err := fs.ReadFile(templatesContent, "siggen.html")
+		if err != nil {
+			http.Error(w, "Not found", 404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(data)
+	})
+
+	// API endpoints
+	http.HandleFunc("/api/rf/config", handleRFConfig)
+	http.HandleFunc("/api/ddc/frequency", handleDDCFrequency)
+	http.HandleFunc("/api/siggen/state", handleSigGenState)
+	http.HandleFunc("/api/siggen/frequency", handleSigGenFrequency)
+	http.HandleFunc("/api/siggen/power", handleSigGenPower)
+	http.HandleFunc("/api/siggen/output", handleSigGenOutput)
+	http.HandleFunc("/api/sweep/start", handleSweepStart)
+	http.HandleFunc("/api/sweep/stop", handleSweepStop)
+	http.HandleFunc("/api/sweep/state", handleSweepState)
+	http.HandleFunc("/api/psu/state", handlePSUState)
+	http.HandleFunc("/api/psu/output/1/enable", handlePSUEnable)
+	http.HandleFunc("/api/psu/output/2/enable", handlePSUEnable)
+	http.HandleFunc("/api/psu/output/1/voltage", handlePSUVoltage)
+	http.HandleFunc("/api/psu/output/2/voltage", handlePSUVoltage)
+	http.HandleFunc("/api/psu/output/1/current", handlePSUCurrent)
+	http.HandleFunc("/api/psu/output/2/current", handlePSUCurrent)
+
+	// Replay mode endpoints
+	http.HandleFunc("/api/replay/upload", handleReplayUpload)
+	http.HandleFunc("/api/replay/files", handleReplayFiles)
+	http.HandleFunc("/api/replay/select", handleReplaySelect)
+	http.HandleFunc("/api/replay/delete", handleReplayDelete)
+	http.HandleFunc("/api/replay/state", handleReplayState)
+	http.HandleFunc("/api/replay/toggle", handleReplayToggle)
+	http.HandleFunc("/api/replay/clear", handleReplayClear)
+
+	// WebSocket streaming endpoint
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Println("Upgrade:", err)
+			return
+		}
+
+		log.Println("Client connected")
+
+		// Register client
+		wsClientsMu.Lock()
+		wsClients[conn] = true
+		wsClientsMu.Unlock()
+
+		defer func() {
+			wsClientsMu.Lock()
+			delete(wsClients, conn)
+			wsClientsMu.Unlock()
+			conn.Close()
+			log.Println("Client disconnected")
+		}()
+
+		// Handle incoming config messages from client
+		go func() {
+			for {
+				_, msg, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var config struct {
+					Channels []string `json:"channels"`
+					Mode     string   `json:"mode"`
+					FPS      int      `json:"fps"`
+					FFTSize  int      `json:"fft_size"`
+					// New control fields
+					Type    string `json:"type"`
+					Enabled *bool  `json:"enabled"`
+				}
+				if err := json.Unmarshal(msg, &config); err == nil {
+					serverState.mu.Lock()
+					
+					// Handle specific control messages
+					if config.Type == "stream_control" && config.Enabled != nil {
+						serverState.StreamingEnabled = *config.Enabled
+					}
+
+					// Handle standard config updates
+					if len(config.Channels) > 0 {
+						serverState.Channels = config.Channels
+					}
+					if config.Mode != "" {
+						serverState.StreamMode = config.Mode
+					}
+					if config.FPS > 0 {
+						serverState.StreamFPS = config.FPS
+					}
+					if config.FFTSize > 0 {
+						serverState.FFTSize = config.FFTSize
+					}
+					serverState.mu.Unlock()
+				}
+			}
+		}()
+
+		// Start streaming
+		streamData(conn, devicePath)
+	})
+
+	addr := fmt.Sprintf(":%d", port)
+	log.Printf("RF Stream Server listening on http://localhost%s", addr)
+	log.Printf("Device: %s", devicePath)
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// streamData continuously reads from device (or replay buffer) and streams to client
+func streamData(conn *websocket.Conn, devicePath string) {
+	var fd int = -1
+	var deviceOpen bool = false
+
+	const numChannels = 8
+	const bytesPerSample = 4 // 2 bytes I + 2 bytes Q per channel
+	const sampleSize = 1024  // samples for time domain display
+
+	for {
+		serverState.mu.RLock()
+		fps := serverState.StreamFPS
+		fftSize := serverState.FFTSize
+		mode := serverState.StreamMode
+		channels := serverState.Channels
+		replayMode := serverState.ReplayMode
+		replayData := serverState.ReplayData
+		streamingEnabled := serverState.StreamingEnabled
+		serverState.mu.RUnlock()
+
+		if fps <= 0 {
+			fps = 30
+		}
+		frameInterval := time.Second / time.Duration(fps)
+
+		// Check if we should be streaming anything at all
+		if !replayMode && !streamingEnabled {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		// Calculate how much data we need
+		samplesNeeded := fftSize
+		if samplesNeeded < sampleSize {
+			samplesNeeded = sampleSize
+		}
+		bytesNeeded := samplesNeeded * numChannels * bytesPerSample
+
+		buf := make([]byte, bytesNeeded)
+
+		if replayMode && len(replayData) > 0 {
+			// Close device if it was open
+			if deviceOpen {
+				unix.Close(fd)
+				deviceOpen = false
+				fd = -1
+			}
+
+			// Read from replay buffer (loop)
+			serverState.mu.Lock()
+			offset := serverState.ReplayOffset
+			for i := 0; i < bytesNeeded; i++ {
+				buf[i] = replayData[offset]
+				offset = (offset + 1) % len(replayData)
+			}
+			serverState.ReplayOffset = offset
+			serverState.mu.Unlock()
+		} else {
+			// Open device if not already open
+			if !deviceOpen {
+				var err error
+				fd, err = unix.Open(devicePath, unix.O_RDONLY, 0)
+				if err != nil {
+					log.Printf("Could not open device %s: %v", devicePath, err)
+					conn.WriteJSON(map[string]string{"error": fmt.Sprintf("Could not open device: %v", err)})
+					return
+				}
+				deviceOpen = true
+
+				// Increase pipe buffer for better throughput
+				const maxPipeSize = 1024 * 1024
+				unix.FcntlInt(uintptr(fd), unix.F_SETPIPE_SZ, maxPipeSize)
+			}
+
+			// Read data from device
+			totalRead := 0
+			for totalRead < bytesNeeded {
+				n, err := unix.Read(fd, buf[totalRead:])
+				if err != nil {
+					if err == unix.EINTR {
+						continue
+					}
+					log.Printf("Read error: %v", err)
+					if deviceOpen {
+						unix.Close(fd)
+					}
+					return
+				}
+				if n == 0 {
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+				totalRead += n
+			}
+		}
+
+		// Parse into channel data
+		// Data format: for each sample, 8 channels * (I16 + Q16) = 32 bytes
+		channelI := make([][]int16, numChannels)
+		channelQ := make([][]int16, numChannels)
+		for ch := 0; ch < numChannels; ch++ {
+			channelI[ch] = make([]int16, samplesNeeded)
+			channelQ[ch] = make([]int16, samplesNeeded)
+		}
+
+		for s := 0; s < samplesNeeded; s++ {
+			baseOffset := s * numChannels * bytesPerSample
+			for ch := 0; ch < numChannels; ch++ {
+				offset := baseOffset + ch*bytesPerSample
+				if offset+4 <= len(buf) {
+					channelI[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset:]))
+					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset+2:]))
+				}
+			}
+		}
+
+		// Build output binary message
+		var outBuf []byte
+
+		// Determine active channels
+		activeChannels := make(map[int]bool)
+		for _, chName := range channels {
+			if len(chName) >= 2 {
+				chIdx := int(chName[1] - '0')
+				if chIdx >= 0 && chIdx < numChannels {
+					activeChannels[chIdx] = true
+				}
+			}
+		}
+
+		// Send raw time-domain data if requested
+		if mode == "raw" || mode == "both" {
+			for ch := 0; ch < numChannels; ch++ {
+				if !activeChannels[ch] {
+					continue
+				}
+				// I component (header 0-7 for I0-I7)
+				iHeader := byte(ch * 2)
+				outBuf = append(outBuf, iHeader)
+				for s := 0; s < sampleSize && s < len(channelI[ch]); s++ {
+					b := make([]byte, 2)
+					binary.LittleEndian.PutUint16(b, uint16(channelI[ch][s]))
+					outBuf = append(outBuf, b...)
+				}
+
+				// Q component (header 1, 3, 5... for Q0-Q7)
+				qHeader := byte(ch*2 + 1)
+				outBuf = append(outBuf, qHeader)
+				for s := 0; s < sampleSize && s < len(channelQ[ch]); s++ {
+					b := make([]byte, 2)
+					binary.LittleEndian.PutUint16(b, uint16(channelQ[ch][s]))
+					outBuf = append(outBuf, b...)
+				}
+			}
+		}
+
+		// Send FFT data if requested
+		if mode == "fft" || mode == "both" {
+			for ch := 0; ch < numChannels; ch++ {
+				if !activeChannels[ch] {
+					continue
+				}
+				// Compute FFT for this channel
+				fftResult := computeFFT(channelI[ch][:fftSize], channelQ[ch][:fftSize], fftSize)
+
+				// DEBUG: Print peak info for Ch0 occasionally to verify DSP
+                if ch == 0 {
+                    maxVal := -200.0
+                    maxBin := 0
+                    for i, v := range fftResult {
+                        if v > maxVal {
+                            maxVal = v
+                            maxBin = i
+                        }
+                    }
+                    log.Printf("[DEBUG] Ch0 Peak: %.1f dBm at Bin %d (Freq roughly %.2f MHz relative)", maxVal, maxBin, float64(maxBin-fftSize/2)/float64(fftSize)*float64(serverState.StreamFPS*fftSize)) // FPS*Size is not sample rate.
+                    // Just log Bin and dBm.
+                    log.Printf("[DEBUG] Ch0 FFT Peak: %.2f dBm at Bin %d", maxVal, maxBin)
+                }
+
+				// FFT header is 128 + channel number
+				fftHeader := byte(128 + ch)
+				outBuf = append(outBuf, fftHeader)
+				for _, val := range fftResult {
+					b := make([]byte, 2)
+					// Cast int16 directly - this preserves negative values correctly
+					binary.LittleEndian.PutUint16(b, uint16(int16(val)))
+					outBuf = append(outBuf, b...)
+				}
+			}
+		}
+
+		// Send the frame
+		if len(outBuf) > 0 {
+			err := conn.WriteMessage(websocket.BinaryMessage, outBuf)
+			if err != nil {
+				return
+			}
+		}
+
+		time.Sleep(frameInterval)
+	}
+}
+
+func broadcastJSON(msg interface{}) {
+	wsClientsMu.RLock()
+	defer wsClientsMu.RUnlock()
+
+	for conn := range wsClients {
+		conn.WriteJSON(msg)
+	}
+}

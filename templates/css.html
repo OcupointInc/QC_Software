@@ -1,0 +1,229 @@
+{{ define "css.html" }}
+<link href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css" rel="stylesheet">
+<style>
+    body { font-family: sans-serif; background: #1a1a1a; color: #ddd; margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+    
+    .app-container { display: flex; width: 100%; height: 100%; }
+    
+    .sidebar { 
+        width: 340px; 
+        background: #2d2d2d; 
+        padding: 0; 
+        overflow-y: auto; 
+        flex-shrink: 0; 
+        border-right: 1px solid #444; 
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .main-content { 
+        flex-grow: 1; 
+        padding: 20px; 
+        overflow-y: auto; 
+        display: flex; 
+        flex-direction: column; 
+        background: #1a1a1a;
+        position: relative;
+    }
+
+    h3 { margin: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+    h4 { margin-top: 0; margin-bottom: 5px; color: #aaa; }
+    
+    /* Collapsible Styling */
+    .collapsible {
+        background-color: #3d3d3d;
+        color: white;
+        cursor: pointer;
+        padding: 15px;
+        width: 100%;
+        border: none;
+        text-align: left;
+        outline: none;
+        font-size: 14px;
+        font-weight: bold;
+        border-bottom: 1px solid #444;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .collapsible:hover, .collapsible.active {
+        background-color: #555;
+    }
+
+    .collapsible:after {
+        content: '\002B'; /* Unicode character for "plus" sign (+) */
+        color: white;
+        font-weight: bold;
+        float: right;
+        margin-left: 5px;
+    }
+
+    .collapsible.active:after {
+        content: "\2212"; /* Unicode character for "minus" sign (-) */
+    }
+
+    .content {
+        padding: 0 15px;
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.2s ease-out;
+        background-color: #2d2d2d;
+    }
+    
+    .content-inner {
+        padding: 15px 0;
+    }
+
+    /* Sidebar Control Styling */
+    .control-group { margin-bottom: 15px; }
+    .control-group label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
+    .control-group input[type="text"],
+    .control-group input[type="number"], 
+    .control-group select { 
+        width: 100%; 
+        padding: 8px; 
+        background: #444; 
+        color: white; 
+        border: 1px solid #666; 
+        border-radius: 4px; 
+        box-sizing: border-box;
+        margin-bottom: 5px;
+    }
+    .control-group button {
+        width: 100%;
+        padding: 8px;
+        cursor: pointer;
+        border-radius: 4px;
+        border: none;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    
+    .btn-primary { background: #4363d8; color: white; }
+    .btn-primary:hover { background: #5577ff; }
+    .btn-success { background: #3cb44b; color: white; }
+    .btn-success:hover { background: #4dd85f; }
+    .btn-danger { background: #e6194b; color: white; }
+
+    input[type="range"] { width: 100%; }
+
+    /* Status & Info */
+    .status-line { margin-bottom: 10px; font-size: 13px; }
+    
+    /* Grid for small inputs (Sweep) */
+    .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* Chart Styling */
+    .chart-container { background: #000; padding: 10px; border-radius: 4px; margin-bottom: 20px; position: relative; }
+    
+    #peak-label {
+        position: absolute;
+        top: 50px;
+        right: 30px;
+        background: rgba(0, 0, 0, 0.85);
+        padding: 12px;
+        border: 1px solid #555;
+        border-radius: 5px;
+        color: #00ff00;
+        font-family: 'Courier New', Courier, monospace;
+        pointer-events: none;
+        display: none;
+        min-width: 240px;
+        line-height: 1.4;
+        font-size: 13px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        z-index: 100;
+    }
+
+    .peak-row { display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
+    .peak-ch  { width: 90px;  color: #aaa; }
+    .peak-db  { width: 80px;  text-align: right; font-weight: bold; }
+    .peak-bin { width: 90px;  text-align: right; color: #00dd00; }
+
+    /* Scale Controls */
+    .scale-controls {
+        margin-top: 10px;
+        padding: 10px;
+        background: #2d2d2d;
+        border-radius: 4px;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .scale-controls label { margin-right: 5px; font-size: 12px; }
+    .scale-controls input[type="number"] {
+        width: 70px;
+        padding: 5px;
+        background: #444;
+        color: white;
+        border: 1px solid #666;
+        border-radius: 3px;
+    }
+    .scale-controls button {
+        padding: 5px 15px;
+        background: #4363d8;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+    .scale-group { display: flex; gap: 10px; align-items: center; }
+
+    /* Channel Checkboxes */
+    #checkboxes { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 5px; margin-top: 10px; }
+    #checkboxes label { display: block; font-size: 12px; font-weight: normal; cursor: pointer; }
+    
+    hr { border: 0; border-top: 1px solid #444; width: 100%; margin: 10px 0; }
+
+    /* Source Selector Tabs */
+    .source-tabs {
+        display: flex;
+        background: #222;
+        border-bottom: 1px solid #444;
+    }
+    .source-tab {
+        flex: 1;
+        padding: 15px;
+        text-align: center;
+        cursor: pointer;
+        background: #2d2d2d;
+        color: #888;
+        font-weight: bold;
+        border-bottom: 3px solid transparent;
+        transition: all 0.2s;
+    }
+    .source-tab:hover { background: #333; color: #ddd; }
+    .source-tab.active {
+        background: #383838;
+        color: white;
+        border-bottom: 3px solid #4363d8;
+    }
+    .tab-content-container { display: none; }
+    .tab-content-container.active { display: block; }
+    
+    /* Transport Button Area */
+    .transport-area {
+        padding: 15px;
+        background: #252525;
+        border-bottom: 1px solid #444;
+    }
+    .transport-btn {
+        width: 100%;
+        padding: 12px;
+        font-size: 16px;
+        font-weight: bold;
+        text-transform: uppercase;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    .btn-start { background: #3cb44b; color: white; }
+    .btn-start:hover { background: #4dd85f; }
+    .btn-stop { background: #e6194b; color: white; }
+    .btn-stop:hover { background: #ff4d4d; }
+</style>
+{{ end }}

@@ -1,0 +1,13 @@
+# User requested ignores
+.claude/
+data/
+
+# Binaries and Logs
+*.bin
+*.log
+capture
+server
+
+# OS Specific
+.DS_Store
+Thumbs.db

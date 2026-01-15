@@ -1,0 +1,191 @@
+{{ define "sidebar.html" }}
+<div class="sidebar">
+    <!-- Source Tabs -->
+    <div class="source-tabs">
+        <div class="source-tab active" onclick="switchSourceMode('live')">LIVE</div>
+        <div class="source-tab" onclick="switchSourceMode('replay')">REPLAY</div>
+    </div>
+
+    <!-- Transport Control (Unified) -->
+    <div class="transport-area">
+        <div class="status-line" style="text-align: center; margin-bottom: 8px;">
+            <span id="connectionStatus" style="color: yellow; font-size: 11px;">Connecting...</span>
+        </div>
+        <button id="transportBtn" onclick="toggleMainTransport()" class="transport-btn btn-start">START STREAM</button>
+    </div>
+
+    <h3>Configuration</h3>
+    
+    <!-- Group 1: GUI Settings (Common) -->
+    <button class="collapsible active">Stream Settings</button>
+    <div class="content" style="max-height: 1000px;"> <!-- Default Open -->
+        <div class="content-inner">
+            <div class="control-group">
+                <label for="streamMode">Stream Mode:</label>
+                <select id="streamMode" onchange="updateConfig()">
+                    <option value="both">Both (Raw + FFT)</option>
+                    <option value="raw">Raw Data Only</option>
+                    <option value="fft" selected>FFT Only</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="streamRate">Update Rate: <span id="rateVal" style="color: #00ff00;">30</span> Hz</label>
+                <input type="range" id="streamRate" min="1" max="60" value="30" 
+                    oninput="document.getElementById('rateVal').innerText = this.value" 
+                    onchange="updateConfig()">
+            </div>
+
+            <div class="control-group">
+                <label for="rbwSelect">Resolution Bandwidth (RBW):</label>
+                <select id="rbwSelect" onchange="updateConfig()">
+                    <option value="1024" selected>~244 kHz</option>
+                    <option value="2048">~122 kHz</option>
+                    <option value="4096">~61 kHz</option>
+                    <option value="8192">~30 kHz</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <button id="peakToggle" onclick="togglePeakTracking()" style="background: #555; color: white;">Enable Peak Tracking</button>
+            </div>
+            
+            <hr>
+            <label style="font-weight: bold; font-size: 13px;">Active Channels</label>
+            <div id="checkboxes"></div>
+        </div>
+    </div>
+
+    <!-- LIVE CONTROLS CONTAINER -->
+    <div id="live-controls" class="tab-content-container active">
+        <!-- Group 2: Signal Generator -->
+        <button class="collapsible">Signal Generator</button>
+        <div class="content">
+            <div class="content-inner">
+                <div class="control-group">
+                    <label>SigGen Frequency (MHz)</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="sigGenFreqInput" value="0" step="0.001" 
+                               onkeypress="if(event.key === 'Enter') updateSigGenFrequency()">
+                        <button onclick="updateSigGenFrequency()" class="btn-success" style="width: auto;">Set</button>
+                    </div>
+                    <span id="sigGenStatus" style="font-size: 11px;"></span>
+                </div>
+
+                <div class="control-group">
+                    <label>SigGen Power (dBm)</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="sigGenPowerInput" value="-10" step="0.1" 
+                               onkeypress="if(event.key === 'Enter') updateSigGenPower()">
+                        <button onclick="updateSigGenPower()" class="btn-success" style="width: auto;">Set</button>
+                    </div>
+                    <span id="sigGenPowerStatus" style="font-size: 11px;"></span>
+                </div>
+
+                <div class="control-group">
+                    <button id="sigGenToggle" onclick="toggleSigGenOutput()" class="btn-danger">RF Output: OFF</button>
+                </div>
+
+                <div class="control-group" style="background: #252525; padding: 10px; border-radius: 5px;">
+                    <label style="color: #ccc;">Sweep Control</label>
+                    <div class="grid-2-col">
+                        <div>
+                            <label style="font-size: 10px; font-weight: normal;">Start (MHz)</label>
+                            <input type="number" id="sweepStart" value="800" step="1">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; font-weight: normal;">Stop (MHz)</label>
+                            <input type="number" id="sweepStop" value="1200" step="1">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; font-weight: normal;">Step (MHz)</label>
+                            <input type="number" id="sweepStep" value="10" step="0.1">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; font-weight: normal;">Dwell (ms)</label>
+                            <input type="number" id="sweepDwell" value="100" step="10">
+                        </div>
+                    </div>
+                    <button id="sweepBtn" onclick="toggleSweep()" class="btn-success" style="margin-top: 10px;">Start Sweep</button>
+                    <div id="sweepStatus" style="font-size: 11px; color: #aaa; margin-top: 5px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group 3: Hardware Control -->
+        <button class="collapsible">Hardware Control</button>
+        <div class="content">
+            <div class="content-inner">
+                <div class="control-group">
+                    <label>DDC Frequency (MHz)</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="ddcFreqInput" value="0" step="1" 
+                               onkeypress="if(event.key === 'Enter') updateDDCFrequency()">
+                        <button onclick="updateDDCFrequency()" class="btn-success" style="width: auto;">Set</button>
+                    </div>
+                    <span id="ddcStatus" style="font-size: 11px;"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group 4: Power Supply -->
+        <button class="collapsible">Power Supply</button>
+        <div class="content">
+            <div class="content-inner">
+                <div class="control-group" style="background: #252525; padding: 10px; border-radius: 5px;">
+                    <label style="color: #ccc;">PSU Channel 2</label>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;">
+                        <span>Voltage:</span>
+                        <span id="psu2Volt" style="font-weight: bold; color: #fff;">-- V</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;">
+                        <span>Current:</span>
+                        <span id="psu2Curr" style="font-weight: bold; color: #fff;">-- A</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px;">
+                        <span>Power:</span>
+                        <span id="psu2Power" style="font-weight: bold; color: #00ff00;">-- W</span>
+                    </div>
+                    <button id="psu2Toggle" onclick="togglePSU2()" class="btn-danger" style="width: 100%;">OFF</button>
+                </div>
+            </div>
+        </div>
+    </div> <!-- End Live Controls -->
+
+    <!-- REPLAY CONTROLS CONTAINER -->
+    <div id="replay-controls" class="tab-content-container">
+        <button class="collapsible active">Data Replay</button>
+        <div class="content" style="max-height: 1000px;"> <!-- Default Open -->
+            <div class="content-inner">
+                <div class="control-group">
+                    <label>Upload .bin File</label>
+                    <input type="file" id="replayFileInput" accept=".bin" style="width: 100%; padding: 5px; background: #444; border: 1px solid #666; border-radius: 4px; color: white; margin-bottom: 5px;">
+                    <button onclick="uploadReplayFile()" class="btn-primary">Upload File</button>
+                    <div id="replayUploadStatus" style="font-size: 11px; margin-top: 5px;"></div>
+                </div>
+
+                <div class="control-group" style="background: #252525; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                    <label style="color: #ccc;">Available Files</label>
+                    <div id="replayFileList" style="max-height: 250px; overflow-y: auto; margin: 5px 0;">
+                        <div style="color: #666; font-size: 12px;">No files uploaded</div>
+                    </div>
+                </div>
+
+                <div class="control-group" style="background: #252525; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                    <label style="color: #ccc;">Replay Status</label>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;">
+                        <span>Selected:</span>
+                        <span id="replayFileName" style="font-weight: bold; color: #fff;">None</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;">
+                        <span>Size:</span>
+                        <span id="replayFileSize" style="font-weight: bold; color: #fff;">--</span>
+                    </div>
+                    <button onclick="clearReplaySelection()" class="btn-danger" style="width: 100%; margin-top: 5px;">Deselect File</button>
+                </div>
+            </div>
+        </div>
+    </div> <!-- End Replay Controls -->
+
+</div>
+{{ end }}

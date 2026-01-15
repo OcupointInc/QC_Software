@@ -1,0 +1,53 @@
+package main
+
+import "sync"
+
+// Server state
+type ServerState struct {
+	mu sync.RWMutex
+
+	// RF Configuration
+	DDCFreqMHz float64
+	IBWMHZ     float64
+
+	// Signal Generator
+	SigGenFreqMHz  float64
+	SigGenPowerDBm float64
+	SigGenRFOutput bool
+
+	// Sweep
+	SweepRunning bool
+	SweepParams  *SweepParams
+
+	// Stream config from client
+	StreamMode       string   // "raw", "fft", "both"
+	StreamFPS        int      // frames per second
+	FFTSize          int      // 1024, 2048, 4096, 8192
+	Channels         []string // active channels like ["I0", "Q0", "I1", "Q1"]
+	StreamingEnabled bool     // Controls if data is actually sent
+
+	// Replay mode
+	ReplayMode   bool
+	ReplayData   []byte
+	ReplayName   string
+	ReplayOffset int
+}
+
+type SweepParams struct {
+	StartMHz float64 `json:"start_mhz"`
+	StopMHz  float64 `json:"stop_mhz"`
+	StepMHz  float64 `json:"step_mhz"`
+	DwellMS  float64 `json:"dwell_ms"`
+}
+
+var serverState = &ServerState{
+	DDCFreqMHz:     125.0,
+	IBWMHZ:         250.0,
+	SigGenFreqMHz:  100.0,
+	SigGenPowerDBm: -10.0,
+	SigGenRFOutput: false,
+	StreamMode:     "fft",
+	StreamFPS:      30,
+	FFTSize:        1024,
+	Channels:       []string{"I0", "Q0"},
+}

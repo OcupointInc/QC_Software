@@ -1,0 +1,46 @@
+{{ define "charts.html" }}
+<div class="main-content">
+    <div class="chart-container">
+        <h4>Time Domain (Raw ADC - I & Q)</h4>
+        <div id="chart-time"></div>
+        <div class="scale-controls">
+            <div class="scale-group">
+                <label>X:</label>
+                <input type="number" id="timeXMin" value="0" step="10">
+                <span>to</span>
+                <input type="number" id="timeXMax" value="1024" step="10">
+            </div>
+            <div class="scale-group">
+                <label>Y:</label>
+                <input type="number" id="timeYMin" value="-2100" step="100">
+                <span>to</span>
+                <input type="number" id="timeYMax" value="2100" step="100">
+            </div>
+            <button onclick="updateTimeScale()">Apply</button>
+            <button onclick="resetTimeScale()" style="background: #666;">Reset</button>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h4>Frequency Domain (Power Spectrum)</h4>
+        <div id="chart-fft"></div>
+        <div id="peak-label">Peak: --</div>
+        <div class="scale-controls">
+            <div class="scale-group">
+                <label>X (MHz):</label>
+                <input type="number" id="fftXMin" value="0" step="1">
+                <span>to</span>
+                <input type="number" id="fftXMax" value="250" step="1">
+            </div>
+            <div class="scale-group">
+                <label>Y (dBm):</label>
+                <input type="number" id="fftYMin" value="-140" step="10">
+                <span>to</span>
+                <input type="number" id="fftYMax" value="10" step="10">
+            </div>
+            <button onclick="updateFFTScale()">Apply</button>
+            <button onclick="resetFFTScale()" style="background: #666;">Reset</button>
+        </div>
+    </div>
+</div>
+{{ end }}

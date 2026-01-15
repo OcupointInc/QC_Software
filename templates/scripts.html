@@ -1,0 +1,1151 @@
+{{ define "scripts.html" }}
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
+
+<script>
+    // Collapsible Logic
+    var coll = document.getElementsByClassName("collapsible");
+    var i;
+
+    for (i = 0; i < coll.length; i++) {
+        coll[i].addEventListener("click", function() {
+            this.classList.toggle("active");
+            var content = this.nextElementSibling;
+            if (content.style.maxHeight) {
+                content.style.maxHeight = null;
+            } else {
+                content.style.maxHeight = content.scrollHeight + "px";
+            } 
+        });
+    }
+
+    const SAMPLE_SIZE = 1024; // This is now just the default/max for time domain display if we want to keep it fixed, or we can make it match FFT_SIZE
+    let FFT_SIZE = 1024;
+    const RF_CHANNELS = [0,1,2,3,4,5,6,7];
+    let peakTrackingEnabled = false;
+
+    // Channel mapping: Software channel index -> {J connector, Sharpie label}
+    const CHANNEL_LABELS = [
+        {j: 4, sharpie: 4}, // Software CH1 (index 0)
+        {j: 7, sharpie: 2}, // Software CH2 (index 1)
+        {j: 3, sharpie: 3}, // Software CH3 (index 2)
+        {j: 8, sharpie: 1}, // Software CH4 (index 3)
+        {j: 2, sharpie: 8}, // Software CH5 (index 4)
+        {j: 5, sharpie: 6}, // Software CH6 (index 5)
+        {j: 1, sharpie: 7}, // Software CH7 (index 6)
+        {j: 6, sharpie: 5}  // Software CH8 (index 7)
+    ];
+
+    function getChannelLabel(chIdx) {
+        const info = CHANNEL_LABELS[chIdx];
+        return `J${info.j} - Ch${info.sharpie}`;
+    }
+
+    // Sweep state
+    let sweepRunning = false;
+    let sweepInterval = null;
+    let currentSweepFreq = 0;
+
+    // RF Configuration (fetched from backend)
+    let CENTER_FREQ_MHZ = 125;
+    let IBW_MHZ = 250;
+    let FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
+    
+    // Helper to get channel index from name (e.g., "I3" -> 3)
+    function getRfChannel(name) { return parseInt(name.slice(1)); }
+
+    // We still need this list for the Charts to map data correctly
+    const COMPONENT_NAMES = [
+        'I0', 'Q0', 'I1', 'Q1', 'I2', 'Q2', 'I3', 'Q3', 
+        'I4', 'Q4', 'I5', 'Q5', 'I6', 'Q6', 'I7', 'Q7'
+    ];
+    
+    let activeComponents = ['I0', 'Q0'];
+    let ws;
+    
+    // --- Source Selection & Transport Logic ---
+    let currentSourceMode = 'live'; // 'live' or 'replay'
+    let isLiveStreaming = false;    // Tracks if live stream is "Started"
+    let isReplaying = false;        // Tracks if replay is "Started"
+
+    function switchSourceMode(mode) {
+        currentSourceMode = mode;
+        
+        // Update Tabs
+        const tabs = document.querySelectorAll('.source-tab');
+        tabs.forEach(t => t.classList.remove('active'));
+        const activeTab = document.querySelector(`.source-tab[onclick="switchSourceMode('${mode}')"]`);
+        if(activeTab) activeTab.classList.add('active');
+
+        // Update Content Visibility
+        document.getElementById('live-controls').className = mode === 'live' ? 'tab-content-container active' : 'tab-content-container';
+        document.getElementById('replay-controls').className = mode === 'replay' ? 'tab-content-container active' : 'tab-content-container';
+
+        // If we switch modes, we should probably stop the "other" mode to avoid confusion
+        // For now, let's just update the button state to reflect the current mode's status
+        updateTransportButton();
+        
+        // Optional: Auto-stop previous mode if desired.
+        // For safety, let's ensure we aren't trying to do both.
+        if (mode === 'live') {
+            // If we were replaying, stop it?
+             if(isReplaying) toggleReplayMode(); 
+        } else {
+            // If we were streaming live, stop it?
+             if(isLiveStreaming) toggleMainTransport(); // This toggles based on current mode, which is now replay.. wait.
+             // We need to be careful. The toggle function uses currentSourceMode.
+             // If we just switched 'currentSourceMode' to 'replay', calling toggleMainTransport() would try to toggle Replay.
+             // We should manipulate the states directly via API if needed.
+             if (isLiveStreaming) {
+                 // Stop live stream manually
+                 toggleLiveStream(false);
+             }
+        }
+    }
+
+    function updateTransportButton() {
+        const btn = document.getElementById('transportBtn');
+        if (currentSourceMode === 'live') {
+            if (isLiveStreaming) {
+                btn.innerText = "STOP LIVE STREAM";
+                btn.className = "transport-btn btn-stop";
+            } else {
+                btn.innerText = "START LIVE STREAM";
+                btn.className = "transport-btn btn-start";
+            }
+        } else {
+            // Replay Mode
+            if (isReplaying) {
+                btn.innerText = "STOP RECORDING";
+                btn.className = "transport-btn btn-stop";
+            } else {
+                btn.innerText = "PLAY RECORDING";
+                btn.className = "transport-btn btn-start";
+                // Disable play if no file selected?
+                if (selectedReplayFile === '') {
+                    btn.disabled = true;
+                    btn.style.background = "#555";
+                    btn.style.cursor = "not-allowed";
+                } else {
+                    btn.disabled = false;
+                    btn.style.background = "#3cb44b"; // Reset to start color
+                    btn.style.cursor = "pointer";
+                }
+            }
+        }
+    }
+
+    function toggleMainTransport() {
+        if (currentSourceMode === 'live') {
+            toggleLiveStream(!isLiveStreaming);
+        } else {
+            toggleReplayMode();
+        }
+    }
+
+    function toggleLiveStream(enable) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        
+        ws.send(JSON.stringify({
+            type: "stream_control",
+            enabled: enable
+        }));
+        
+        // Optimistic update, actual state should come from server or we assume success
+        isLiveStreaming = enable;
+        updateTransportButton();
+    }
+    
+    // --- UI Setup (Simplified to CH1-CH8) ---
+    const cbContainer = document.getElementById('checkboxes');
+    
+    RF_CHANNELS.forEach(chIdx => {
+        const label = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = chIdx; // Value is 0, 1, 2...
+
+        // Default: Check Channel 1 (index 0)
+        box.checked = (chIdx === 0);
+        box.onchange = updateConfig;
+
+        label.appendChild(box);
+        // Display with J number and Sharpie channel
+        label.appendChild(document.createTextNode(` ${getChannelLabel(chIdx)}`));
+
+        cbContainer.appendChild(label);
+    });
+
+    function togglePeakTracking() {
+        peakTrackingEnabled = !peakTrackingEnabled;
+        const btn = document.getElementById('peakToggle');
+        const label = document.getElementById('peak-label');
+
+        if (peakTrackingEnabled) {
+            btn.innerText = "Disable Peak Tracking";
+            btn.style.background = "#e6194b";
+            label.style.display = "block";
+        } else {
+            btn.innerText = "Enable Peak Tracking";
+            btn.style.background = "#555";
+            label.style.display = "none";
+        }
+    }
+
+    // Scale control functions
+    function updateTimeScale() {
+        if (!uplotTime) return;
+        const xMin = parseFloat(document.getElementById('timeXMin').value);
+        const xMax = parseFloat(document.getElementById('timeXMax').value);
+        const yMin = parseFloat(document.getElementById('timeYMin').value);
+        const yMax = parseFloat(document.getElementById('timeYMax').value);
+
+        // Store the user-defined scales
+        timeScaleX = { min: xMin, max: xMax };
+        timeScaleY = { min: yMin, max: yMax };
+
+        uplotTime.setScale('x', timeScaleX);
+        uplotTime.setScale('y', timeScaleY);
+    }
+
+    function updateFFTScale() {
+        if (!uplotFFT) return;
+        const xMin = parseFloat(document.getElementById('fftXMin').value);
+        const xMax = parseFloat(document.getElementById('fftXMax').value);
+        const yMin = parseFloat(document.getElementById('fftYMin').value);
+        const yMax = parseFloat(document.getElementById('fftYMax').value);
+
+        // Store the user-defined scales
+        fftScaleX = { min: xMin, max: xMax };
+        fftScaleY = { min: yMin, max: yMax };
+
+        uplotFFT.setScale('x', fftScaleX);
+        uplotFFT.setScale('y', fftScaleY);
+    }
+
+    function resetTimeScale() {
+        if (!uplotTime) return;
+        const defaultXMin = 0;
+        const defaultXMax = SAMPLE_SIZE;
+        const defaultYMin = -2100;
+        const defaultYMax = 2100;
+        document.getElementById('timeXMin').value = defaultXMin;
+        document.getElementById('timeXMax').value = defaultXMax;
+        document.getElementById('timeYMin').value = defaultYMin;
+        document.getElementById('timeYMax').value = defaultYMax;
+
+        // Clear stored scales to use defaults
+        timeScaleX = null;
+        timeScaleY = null;
+
+        uplotTime.setScale('x', { min: defaultXMin, max: defaultXMax });
+        uplotTime.setScale('y', { min: defaultYMin, max: defaultYMax });
+    }
+
+    function resetFFTScale() {
+        if (!uplotFFT) return;
+        const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
+        const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
+        const defaultYMin = -140;
+        const defaultYMax = 10;
+        document.getElementById('fftXMin').value = minFreq;
+        document.getElementById('fftXMax').value = maxFreq;
+        document.getElementById('fftYMin').value = defaultYMin;
+        document.getElementById('fftYMax').value = defaultYMax;
+
+        // Clear stored scales to use defaults
+        fftScaleX = null;
+        fftScaleY = null;
+
+        uplotFFT.setScale('x', { min: minFreq, max: maxFreq });
+        uplotFFT.setScale('y', { min: defaultYMin, max: defaultYMax });
+    }
+
+    // --- Configuration Logic ---
+    function updateConfig() {
+        const boxes = cbContainer.querySelectorAll('input[type="checkbox"]');
+        activeComponents = [];
+        
+        boxes.forEach(box => {
+            if(box.checked) {
+                const idx = box.value;
+                activeComponents.push(`I${idx}`);
+                activeComponents.push(`Q${idx}`);
+            }
+        });
+
+        const mode = document.getElementById('streamMode').value;
+        const fps = document.getElementById('streamRate').value;
+        const rbwSelect = document.getElementById('rbwSelect');
+        
+        // Check if FFT size changed
+        const newFFTSize = parseInt(rbwSelect ? rbwSelect.value : 1024);
+        
+        if (newFFTSize !== FFT_SIZE) {
+            FFT_SIZE = newFFTSize;
+            FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
+            //console.log(`Updated FFT Size: ${FFT_SIZE}, RBW: ${FREQ_RES_MHZ * 1000} kHz`);
+        }
+
+        setupCharts(); 
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const payload = {
+                channels: activeComponents,
+                mode: mode,
+                fps: parseInt(fps),
+                fft_size: FFT_SIZE // Send updated FFT size
+            };
+            ws.send(JSON.stringify(payload));
+        }
+    }
+
+    // --- uPlot Instances ---
+    let uplotTime, uplotFFT;
+    let dataTime = [], dataFFT = [];
+
+    // Store user-defined scale ranges
+    let timeScaleX = null;
+    let timeScaleY = null;
+    let fftScaleX = null;
+    let fftScaleY = null;
+
+    function getRandomColor(idx) {
+        const colors = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6"];
+        return colors[idx % colors.length];
+    }
+
+    function getChartWidth() {
+        const container = document.querySelector('.main-content');
+        return container ? container.clientWidth - 40 : window.innerWidth - 60;
+    }
+
+    function setupCharts() {
+        if (uplotTime) { uplotTime.destroy(); uplotTime = null; }
+        if (uplotFFT) { uplotFFT.destroy(); uplotFFT = null; }
+
+        document.getElementById('chart-time').innerHTML = '';
+        document.getElementById('chart-fft').innerHTML = '';
+
+        const mode = document.getElementById('streamMode').value;
+        const showRaw = (mode === 'raw' || mode === 'both');
+        const showFFT = (mode === 'fft' || mode === 'both');
+
+        const width = getChartWidth();
+
+        if (showRaw) {
+            const xTime = Array.from({length: SAMPLE_SIZE}, (_, i) => i);
+            dataTime = [xTime];
+            const seriesTime = [{ label: "Time" }];
+
+            COMPONENT_NAMES.forEach((name, i) => {
+                dataTime.push(new Array(SAMPLE_SIZE).fill(0));
+                const isActive = activeComponents.includes(name);
+                seriesTime.push({
+                    label: name, stroke: getRandomColor(getRfChannel(name)),
+                    width: 1, show: isActive
+                });
+            });
+
+            uplotTime = new uPlot({
+                width: width, height: 300,
+                scales: {
+                    // CHANGE 1: Use functions for range to check global overrides
+                    x: { 
+                        time: false, 
+                        range: (u, min, max) => timeScaleX ? [timeScaleX.min, timeScaleX.max] : [0, SAMPLE_SIZE] 
+                    },
+                    y: { 
+                        range: (u, min, max) => timeScaleY ? [timeScaleY.min, timeScaleY.max] : [-2100, 2100] 
+                    }
+                },
+                axes: [
+                    { label: "Sample Index", labelSize: 20, stroke: "#ccc" },
+                    { label: "Amplitude (ADC counts)", labelSize: 20, stroke: "#ccc", space: 40 }
+                ],
+                series: seriesTime
+            }, dataTime, document.getElementById('chart-time'));
+        }
+
+        if (showFFT) {
+            const xFFT = Array.from({length: FFT_SIZE}, (_, i) => {
+                const bin = i - FFT_SIZE/2;
+                return CENTER_FREQ_MHZ + (bin * FREQ_RES_MHZ);
+            });
+            dataFFT = [xFFT];
+            const seriesFFT = [{ label: "Frequency (MHz)" }];
+
+            // Add Traces
+            RF_CHANNELS.forEach(ch => {
+                dataFFT.push(new Array(FFT_SIZE).fill(-50));
+                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                seriesFFT.push({
+                    label: getChannelLabel(ch), stroke: getRandomColor(ch),
+                    width: 2, show: isActive
+                });
+            });
+
+            // Add Peaks
+            RF_CHANNELS.forEach(ch => {
+                dataFFT.push(new Array(FFT_SIZE).fill(null));
+                seriesFFT.push({
+                    label: `Peak ${getChannelLabel(ch)}`, stroke: getRandomColor(ch),
+                    fill: "white", width: 2,
+                    paths: uPlot.paths.points({size: 8}),
+                    show: true, display: false
+                });
+            });
+
+            const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
+            const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
+
+            uplotFFT = new uPlot({
+                width: width, height: 500,
+                scales: {
+                    // CHANGE 2: Use functions for FFT range as well
+                    x: {
+                        time: false,
+                        range: (u, min, max) => fftScaleX ? [fftScaleX.min, fftScaleX.max] : [minFreq, maxFreq]
+                    },
+                    y: {
+                        range: (u, min, max) => fftScaleY ? [fftScaleY.min, fftScaleY.max] : [-140, 10]
+                    }
+                },
+                axes: [
+                    { label: "Frequency (MHz)", stroke: "#ccc", values: (self, splits) => splits.map(v => v.toFixed(3)) },
+                    { label: "Power (dBm)", stroke: "#ccc", space: 40 }
+                ],
+                series: seriesFFT,
+                cursor: { focus: { prox: 5 } }
+            }, dataFFT, document.getElementById('chart-fft'));
+        }
+    }
+
+    // --- WebSocket ---
+    function connect() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            document.getElementById('connectionStatus').innerText = "SYSTEM CONNECTED";
+            document.getElementById('connectionStatus').style.color = "#3cb44b";
+            updateConfig(); 
+            // Default to starting live stream? Or wait for user?
+            // Let's wait for user to hit START.
+        };
+
+        ws.onmessage = (event) => {
+            const statusEl = document.getElementById('connectionStatus'); // Reusing this for general status if needed
+            
+            if (typeof event.data === "string") {
+                try {
+                    const msg = JSON.parse(event.data);
+                    
+                    if (msg.type === "ddc_update") {
+                        document.getElementById('ddcFreqInput').value = msg.freq_mhz;
+                    } else if (msg.type === "siggen_freq_update") {
+                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz;
+                    } else if (msg.type === "siggen_power_update") {
+                        document.getElementById('sigGenPowerInput').value = msg.power_dbm;
+                    } else if (msg.type === "siggen_output_update") {
+                        const btn = document.getElementById('sigGenToggle');
+                        if (msg.enabled) {
+                            btn.innerText = "RF Output: ON";
+                            btn.className = "btn-success";
+                        } else {
+                            btn.innerText = "RF Output: OFF";
+                            btn.className = "btn-danger";
+                        }
+                    } else if (msg.type === "sweep_status") {
+                         if (msg.running) {
+                             setSweepRunningState(true);
+                             if (msg.params) {
+                                 document.getElementById('sweepStart').value = msg.params.start_mhz;
+                                 document.getElementById('sweepStop').value = msg.params.stop_mhz;
+                                 document.getElementById('sweepStep').value = msg.params.step_mhz;
+                                 document.getElementById('sweepDwell').value = msg.params.dwell_ms;
+                             }
+                         } else {
+                             setSweepRunningState(false);
+                         }
+                    } else if (msg.type === "sweep_progress") {
+                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz.toFixed(3);
+                        // Optional: update a specific sweep status element if visible
+                    } else if (msg.type === "replay_update") {
+                        updateReplayUI(msg.has_data, msg.filename || '', msg.size || 0, msg.replay_mode);
+                    } else if (msg.type === "replay_files") {
+                        updateFileList(msg.files || []);
+                    }
+                } catch (e) {
+                     console.error("Parse error:", e);
+                }
+            } else {
+                // Binary Data = Streaming
+                // We could update a "receiving data" indicator here if we wanted
+                parseAndPlot(event.data);
+            }
+        };
+        
+        ws.onclose = () => {
+            document.getElementById('connectionStatus').innerText = "CONNECTION LOST - RECONNECTING...";
+            document.getElementById('connectionStatus').style.color = "#e6194b";
+            // Auto-reconnect logic
+            if (!manuallyClosed) {
+                setTimeout(connect, 2000);
+            }
+        };
+    }
+    
+    function parseAndPlot(arrayBuffer) {
+        const view = new DataView(arrayBuffer);
+        let offset = 0;
+        const BYTES_TIME = SAMPLE_SIZE * 2;
+        const BYTES_FFT = FFT_SIZE * 2; 
+
+        // Object to store peaks for each channel
+        let channelPeaks = {};
+
+        while (offset < arrayBuffer.byteLength) {
+            if (offset + 1 > arrayBuffer.byteLength) break;
+            const headerID = view.getUint8(offset);
+            offset += 1;
+
+            if (headerID < 128) {
+                if (uplotTime && offset + BYTES_TIME <= arrayBuffer.byteLength) {
+                    const slice = arrayBuffer.slice(offset, offset + BYTES_TIME);
+                    dataTime[headerID + 1] = new Int16Array(slice);
+                    offset += BYTES_TIME;
+                } else offset += BYTES_TIME;
+            } 
+            else {
+                const rfCh = headerID - 128;
+                if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
+                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
+                    const fftArray = new Int16Array(slice);
+                    dataFFT[rfCh + 1] = fftArray; // Update the line plot
+
+                    if (peakTrackingEnabled) {
+                        let localMax = -9999;
+                        let localIdx = 0;
+                        for (let i = 0; i < fftArray.length; i++) {
+                            if (fftArray[i] > localMax) {
+                                localMax = fftArray[i];
+                                localIdx = i;
+                            }
+                        }
+
+                        // --- UPDATE PEAK MARKER ---
+                        // Create an array of nulls and put the max value at the peak index
+                        const markerArr = new Array(FFT_SIZE).fill(null);
+                        markerArr[localIdx] = localMax;
+
+                        // RF Channels are 0-7, Trace series are 1-8, Marker series are 9-16
+                        dataFFT[rfCh + 9] = markerArr;
+
+                        // Update the Green Label info - convert bin to absolute frequency
+                        const bin = localIdx - (FFT_SIZE / 2);
+                        const freqMHz = CENTER_FREQ_MHZ + (bin * FREQ_RES_MHZ);
+                        channelPeaks[rfCh + 1] = {
+                            db: localMax,
+                            freqMHz: freqMHz
+                        };
+                    } else {
+                        // Clear markers if tracking is disabled
+                        dataFFT[rfCh + 9] = new Array(FFT_SIZE).fill(null);
+                    }
+                    offset += BYTES_FFT;
+                }
+            }
+        }
+
+        if(uplotTime) {
+            uplotTime.setData(dataTime);
+        }
+
+        if(uplotFFT) {
+            uplotFFT.setData(dataFFT);
+
+            // --- Update Green Fixed-Width Label ---
+            const labelEl = document.getElementById('peak-label');
+            if (peakTrackingEnabled) {
+                let html = `<div style="color:#aaa; font-size:11px; margin-bottom:5px;">CHANNEL         POWER       FREQUENCY</div>`;
+
+                // Iterate 1-8 to keep them in order
+                for(let i = 1; i <= 8; i++) {
+                    if (channelPeaks[i]) {
+                        const peak = channelPeaks[i];
+                        // Format frequency with 3 decimal places
+                        const freqStr = peak.freqMHz.toFixed(3);
+                        const chLabel = getChannelLabel(i - 1); // Convert 1-based to 0-based index
+
+                        html += `
+                        <div class="peak-row">
+                            <span class="peak-ch">${chLabel}</span>
+                            <span class="peak-db">${peak.db} dB</span>
+                            <span class="peak-bin">${freqStr} MHz</span>
+                        </div>`;
+                    }
+                }
+                labelEl.innerHTML = html;
+            }
+        }
+    }
+
+    // Fetch RF configuration from backend
+    async function fetchRFConfig() {
+        try {
+            const response = await fetch('/api/rf/config');
+            const config = await response.json();
+
+            // Use DDC frequency as the center frequency
+            CENTER_FREQ_MHZ = config.ddc_freq_mhz;
+            IBW_MHZ = config.ibw_mhz;
+            FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
+
+            console.log(`RF Config: Center=${CENTER_FREQ_MHZ} MHz, IBW=${IBW_MHZ} MHz, DDC=${config.ddc_freq_mhz} MHz, Res=${FREQ_RES_MHZ.toFixed(6)} MHz/bin`);
+
+            // Update FFT X-axis input fields with correct frequency range
+            const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
+            const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
+            document.getElementById('fftXMin').value = minFreq;
+            document.getElementById('fftXMax').value = maxFreq;
+
+            // Refresh charts with new frequency scale
+            if (uplotFFT) {
+                setupCharts();
+            }
+        } catch (error) {
+            console.error('Failed to fetch RF config:', error);
+        }
+    }
+
+    // Update DDC frequency
+    async function updateDDCFrequency() {
+        const freqInput = document.getElementById('ddcFreqInput');
+        const statusEl = document.getElementById('ddcStatus');
+        const freq = parseFloat(freqInput.value);
+
+        statusEl.innerText = 'Updating...';
+        statusEl.style.color = 'yellow';
+
+        try {
+            const response = await fetch('/api/ddc/frequency', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ freq_mhz: freq })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                statusEl.innerText = `✓ DDC set to ${data.ddc_freq_mhz} MHz`;
+                statusEl.style.color = '#3cb44b';
+                setTimeout(() => { statusEl.innerText = ''; }, 3000);
+
+                // Refresh RF config to update frequency axis
+                await fetchRFConfig();
+            } else {
+                statusEl.innerText = `✗ Error: ${data.error || 'Failed'}`;
+                statusEl.style.color = '#e6194b';
+            }
+        } catch (error) {
+            statusEl.innerText = `✗ Error: ${error.message}`;
+            statusEl.style.color = '#e6194b';
+            console.error('Failed to update DDC frequency:', error);
+        }
+    }
+
+    // Update Signal Generator frequency
+    async function updateSigGenFrequency() {
+        const freqInput = document.getElementById('sigGenFreqInput');
+        const statusEl = document.getElementById('sigGenStatus');
+        const freq = parseFloat(freqInput.value);
+
+        statusEl.innerText = 'Updating...';
+        statusEl.style.color = 'yellow';
+
+        try {
+            const response = await fetch('/api/siggen/frequency', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ freq_mhz: freq })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                statusEl.innerText = `✓ SigGen set to ${data.freq_mhz} MHz`;
+                statusEl.style.color = '#3cb44b';
+                setTimeout(() => { statusEl.innerText = ''; }, 3000);
+            } else {
+                statusEl.innerText = `✗ Error: ${data.error || 'Failed'}`;
+                statusEl.style.color = '#e6194b';
+            }
+        } catch (error) {
+            statusEl.innerText = `✗ Error: ${error.message}`;
+            statusEl.style.color = '#e6194b';
+            console.error('Failed to update signal generator frequency:', error);
+        }
+    }
+
+    async function updateSigGenPower() {
+        const powerInput = document.getElementById('sigGenPowerInput');
+        const statusEl = document.getElementById('sigGenPowerStatus');
+        const power = parseFloat(powerInput.value);
+
+        statusEl.innerText = 'Updating...';
+        statusEl.style.color = 'yellow';
+
+        try {
+            const response = await fetch('/api/siggen/power', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ power_dbm: power })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                statusEl.innerText = `✓ ${data.power_dbm} dBm`;
+                statusEl.style.color = '#3cb44b';
+                setTimeout(() => { statusEl.innerText = ''; }, 3000);
+            } else {
+                statusEl.innerText = `✗ Error`;
+                statusEl.style.color = '#e6194b';
+            }
+        } catch (error) {
+            statusEl.innerText = `✗ Error`;
+            statusEl.style.color = '#e6194b';
+            console.error('Failed to update signal generator power:', error);
+        }
+    }
+
+    async function toggleSigGenOutput() {
+        const btn = document.getElementById('sigGenToggle');
+        const isCurrentlyOn = btn.innerText.includes("ON");
+        const newState = !isCurrentlyOn;
+
+        try {
+            const response = await fetch('/api/siggen/output', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: newState })
+            });
+            
+            if (response.ok) {
+                // Update UI immediately (though websocket will also push)
+                if (newState) {
+                    btn.innerText = "RF Output: ON";
+                    btn.className = "btn-success";
+                } else {
+                    btn.innerText = "RF Output: OFF";
+                    btn.className = "btn-danger";
+                }
+            }
+        } catch (error) {
+            console.error('Failed to toggle SigGen output:', error);
+        }
+    }
+
+    // Remove setSigGenFrequencyQuiet as it's no longer needed in client
+
+    function toggleSweep() {
+        if (sweepRunning) {
+            stopSweep();
+        } else {
+            startSweep();
+        }
+    }
+
+    async function startSweep() {
+        const startFreq = parseFloat(document.getElementById('sweepStart').value);
+        const stopFreq = parseFloat(document.getElementById('sweepStop').value);
+        const stepFreq = parseFloat(document.getElementById('sweepStep').value);
+        const dwellTime = parseFloat(document.getElementById('sweepDwell').value);
+
+        if (startFreq >= stopFreq) { alert('Start < Stop required'); return; }
+        if (stepFreq <= 0) { alert('Step > 0 required'); return; }
+        if (dwellTime < 10) { alert('Dwell >= 10ms required'); return; }
+
+        try {
+            const response = await fetch('/api/sweep/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    start_mhz: startFreq,
+                    stop_mhz: stopFreq,
+                    step_mhz: stepFreq,
+                    dwell_ms: dwellTime
+                })
+            });
+            // The WebSocket message will update the UI state
+        } catch (error) {
+            console.error('Failed to start sweep:', error);
+        }
+    }
+
+    async function stopSweep() {
+        try {
+            await fetch('/api/sweep/stop', { method: 'POST' });
+            // The WebSocket message will update the UI state
+        } catch (error) {
+            console.error('Failed to stop sweep:', error);
+        }
+    }
+
+    function setSweepRunningState(isRunning) {
+        sweepRunning = isRunning;
+        const sweepBtn = document.getElementById('sweepBtn');
+        const statusEl = document.getElementById('sweepStatus');
+        
+        const inputs = ['sweepStart', 'sweepStop', 'sweepStep', 'sweepDwell'];
+
+        if (isRunning) {
+            sweepBtn.innerText = 'Stop Sweep';
+            sweepBtn.className = 'btn-danger';
+            inputs.forEach(id => document.getElementById(id).disabled = true);
+        } else {
+            sweepBtn.innerText = 'Start Sweep';
+            sweepBtn.className = 'btn-success';
+            inputs.forEach(id => document.getElementById(id).disabled = false);
+            statusEl.innerText = 'Sweep stopped';
+            statusEl.style.color = '#aaa';
+            setTimeout(() => { statusEl.innerText = ''; }, 3000);
+        }
+    }
+    
+    async function fetchSweepState() {
+         try {
+            const response = await fetch('/api/sweep/state');
+            const data = await response.json();
+            if (data.running) {
+                setSweepRunningState(true);
+                if (data.params) {
+                     document.getElementById('sweepStart').value = data.params.start_mhz;
+                     document.getElementById('sweepStop').value = data.params.stop_mhz;
+                     document.getElementById('sweepStep').value = data.params.step_mhz;
+                     document.getElementById('sweepDwell').value = data.params.dwell_ms;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch sweep state:', error);
+        }
+    }
+
+    // Fetch and populate DDC frequency
+    async function fetchDDCFrequency() {
+        try {
+            const response = await fetch('/api/ddc/frequency');
+            const data = await response.json();
+            if (data.ddc_freq_mhz !== undefined) {
+                document.getElementById('ddcFreqInput').value = data.ddc_freq_mhz;
+            }
+        } catch (error) {
+            console.error('Failed to fetch DDC frequency:', error);
+        }
+    }
+
+    // Fetch and populate signal generator state
+    async function fetchSigGenState() {
+        try {
+            const response = await fetch('/api/siggen/state');
+            const data = await response.json();
+            if (data.freq_mhz !== undefined) {
+                document.getElementById('sigGenFreqInput').value = data.freq_mhz;
+            }
+            if (data.power_dbm !== undefined) {
+                document.getElementById('sigGenPowerInput').value = data.power_dbm;
+            }
+            if (data.rf_output !== undefined) {
+                const btn = document.getElementById('sigGenToggle');
+                if (data.rf_output) {
+                    btn.innerText = "RF Output: ON";
+                    btn.className = "btn-success";
+                } else {
+                    btn.innerText = "RF Output: OFF";
+                    btn.className = "btn-danger";
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch signal generator state:', error);
+        }
+    }
+
+    // --- PSU Logic ---
+    async function fetchPSUState() {
+        try {
+            const response = await fetch('/api/psu/state');
+            if (!response.ok) return; // Silent fail on error to avoid log spam
+            
+            const data = await response.json();
+            if (data.outputs && data.outputs.length >= 2) { // Index 1 is Channel 2
+                const ch2 = data.outputs[1]; 
+                
+                const volt = ch2.measured_voltage;
+                const curr = ch2.measured_current;
+                const power = volt * curr;
+                const enabled = ch2.enabled;
+
+                document.getElementById('psu2Volt').innerText = volt.toFixed(3) + " V";
+                document.getElementById('psu2Curr').innerText = curr.toFixed(3) + " A";
+                document.getElementById('psu2Power').innerText = power.toFixed(3) + " W";
+
+                const btn = document.getElementById('psu2Toggle');
+                if (enabled) {
+                    btn.innerText = "ON";
+                    btn.className = "btn-success";
+                } else {
+                    btn.innerText = "OFF";
+                    btn.className = "btn-danger";
+                }
+            }
+        } catch (error) {
+            // Console log occasionally useful but can spam
+            // console.error('Failed to fetch PSU state:', error);
+        }
+    }
+
+    async function togglePSU2() {
+        const btn = document.getElementById('psu2Toggle');
+        const isCurrentlyOn = btn.innerText === "ON";
+        const newState = !isCurrentlyOn;
+
+        try {
+            const response = await fetch('/api/psu/output/2/enable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: newState })
+            });
+            
+            if (response.ok) {
+                // Update UI immediately for responsiveness, though the polling will also catch it
+                if (newState) {
+                    btn.innerText = "ON";
+                    btn.className = "btn-success";
+                } else {
+                    btn.innerText = "OFF";
+                    btn.className = "btn-danger";
+                }
+            }
+        } catch (error) {
+            console.error('Failed to toggle PSU:', error);
+            alert('Failed to toggle PSU Channel 2');
+        }
+    }
+
+    // --- Replay Mode Functions ---
+    let replayModeActive = false;
+    let replayFiles = [];
+    let selectedReplayFile = '';
+
+    async function uploadReplayFile() {
+        const fileInput = document.getElementById('replayFileInput');
+        const statusEl = document.getElementById('replayUploadStatus');
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+            statusEl.innerText = 'Please select a file first';
+            statusEl.style.color = '#e6194b';
+            return;
+        }
+
+        const file = fileInput.files[0];
+        statusEl.innerText = `Uploading ${file.name}...`;
+        statusEl.style.color = 'yellow';
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/replay/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                statusEl.innerText = `Uploaded: ${data.filename}`;
+                statusEl.style.color = '#3cb44b';
+                fileInput.value = ''; // Clear the input
+                setTimeout(() => { statusEl.innerText = ''; }, 3000);
+            } else {
+                statusEl.innerText = `Error: ${data.error || 'Upload failed'}`;
+                statusEl.style.color = '#e6194b';
+            }
+        } catch (error) {
+            statusEl.innerText = `Error: ${error.message}`;
+            statusEl.style.color = '#e6194b';
+        }
+    }
+
+    async function fetchReplayFiles() {
+        try {
+            const response = await fetch('/api/replay/files');
+            const data = await response.json();
+            updateFileList(data.files || []);
+        } catch (error) {
+            console.error('Failed to fetch replay files:', error);
+        }
+    }
+
+    async function selectReplayFile(filename) {
+        try {
+            const response = await fetch('/api/replay/select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: filename })
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                alert(data.error || 'Failed to select file');
+            } else {
+                // Manually fetch state to ensure UI updates
+                fetchReplayState();
+            }
+        } catch (error) {
+            console.error('Failed to select replay file:', error);
+        }
+    }
+
+    async function deleteReplayFile(filename) {
+        if (!confirm(`Delete ${filename}?`)) return;
+
+        try {
+            const response = await fetch('/api/replay/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: filename })
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                alert(data.error || 'Failed to delete file');
+            }
+        } catch (error) {
+            console.error('Failed to delete replay file:', error);
+        }
+    }
+
+    async function toggleReplayMode() {
+        const newState = !replayModeActive;
+
+        try {
+            const response = await fetch('/api/replay/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: newState })
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                alert(data.error || 'Failed to toggle replay mode');
+            }
+        } catch (error) {
+            console.error('Failed to toggle replay mode:', error);
+        }
+    }
+
+    async function clearReplaySelection() {
+        try {
+            const response = await fetch('/api/replay/clear', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                updateReplayUI(false, '', 0, false);
+            }
+        } catch (error) {
+            console.error('Failed to clear replay selection:', error);
+        }
+    }
+
+    async function fetchReplayState() {
+        try {
+            const response = await fetch('/api/replay/state');
+            const data = await response.json();
+            updateReplayUI(data.has_data, data.filename, data.size, data.replay_mode);
+        } catch (error) {
+            console.error('Failed to fetch replay state:', error);
+        }
+    }
+
+    function updateFileList(files) {
+        replayFiles = files;
+        const listEl = document.getElementById('replayFileList');
+
+        if (files.length === 0) {
+            listEl.innerHTML = '<div style="color: #666; font-size: 12px;">No files uploaded</div>';
+            return;
+        }
+
+        let html = '';
+        files.forEach(file => {
+            const isSelected = file.name === selectedReplayFile;
+            const bgColor = isSelected ? '#3d3d3d' : 'transparent';
+            const border = isSelected ? '1px solid #4363d8' : '1px solid #333';
+            const textColor = isSelected ? '#fff' : '#ccc';
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; margin: 2px 0; background: ${bgColor}; border: ${border}; border-radius: 3px; font-size: 12px;">
+                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${textColor};" title="${file.name}">
+                        ${file.name}
+                    </div>
+                    <div style="color: #888; margin: 0 8px; white-space: nowrap; font-size: 11px;">${formatBytes(file.size)}</div>
+                    <button onclick="selectReplayFile('${file.name}')" style="background: #4363d8; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; margin-right: 5px; width: auto; margin-bottom: 0;">Select</button>
+                    <button onclick="deleteReplayFile('${file.name}')" style="background: #e6194b; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold; width: auto; margin-bottom: 0;">X</button>
+                </div>
+            `;
+        });
+        listEl.innerHTML = html;
+    }
+
+    function updateReplayUI(hasData, filename, size, isReplayingState) {
+        replayModeActive = isReplayingState;
+        isReplaying = isReplayingState; // Update global state
+        selectedReplayFile = filename;
+
+        const fileNameEl = document.getElementById('replayFileName');
+        const fileSizeEl = document.getElementById('replayFileSize');
+        // Removed old status elements and buttons from here since they are gone/moved
+
+        fileNameEl.innerText = hasData ? filename : 'None';
+        fileSizeEl.innerText = hasData ? formatBytes(size) : '--';
+
+        // Update the Main Transport Button
+        updateTransportButton();
+
+        // Update file list to show selection
+        updateFileList(replayFiles);
+    }
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Initialize
+    fetchRFConfig().then(() => {
+        setupCharts();
+        connect();
+    });
+
+    // Fetch initial values
+    fetchDDCFrequency();
+    fetchSigGenState();
+    fetchPSUState(); // Initial fetch
+    fetchSweepState();
+    fetchReplayFiles(); // Initial file list fetch
+    fetchReplayState(); // Initial replay state fetch
+    setInterval(fetchPSUState, 2000); // Poll every 2 seconds
+
+    window.addEventListener('resize', () => {
+        const w = getChartWidth();
+        if(uplotTime) uplotTime.setSize({width: w, height: 300});
+        if(uplotFFT) uplotFFT.setSize({width: w, height: 500});
+    });
+
+</script>
+{{ end }}
