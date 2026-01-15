@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"os"
+	"sync"
+)
 
 // Server state
 type ServerState struct {
@@ -33,6 +36,13 @@ type ServerState struct {
 	ReplayName        string
 	ReplayOffset      int
 	ForceReplayUpdate bool
+
+	// Recording
+	Recording          bool
+	RecordingFile      string
+	RecordingSamples   int // Total samples to record
+	RecordingCurrent   int // Samples recorded so far
+	RecordingFileHandle *os.File
 }
 
 type SweepParams struct {
@@ -52,5 +62,5 @@ var serverState = &ServerState{
 	StreamFPS:      30,
 	FFTSize:        1024,
 	FFTTypes:       []string{"complex"},
-	Channels:       []string{"I0", "Q0"},
+	Channels:       []string{"I1", "Q1"},
 }

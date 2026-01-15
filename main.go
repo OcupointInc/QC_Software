@@ -4,7 +4,9 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,9 @@ func main() {
 	// Simulation flags
 	isSim := flag.Bool("sim", false, "Simulate XDMA hardware via named pipe")
 
+	// PCIe reset flag
+	resetPCIe := flag.Bool("r", false, "Reset PCIe device before starting")
+
 	// Custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -75,6 +80,19 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Reset PCIe device if requested
+	if *resetPCIe {
+		log.Println("Resetting PCIe device...")
+		cmd := exec.Command("/bin/bash", "reset_pcie.sh")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatal("PCIe reset failed:", err)
+		}
+		log.Println("PCIe reset complete")
+		time.Sleep(1 * time.Second)
+	}
 
 	// If simulation mode is on, override device path and start the background generator
 	if *isSim {

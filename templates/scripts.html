@@ -23,21 +23,13 @@
     const RF_CHANNELS = [0,1,2,3,4,5,6,7];
     let peakTrackingEnabled = false;
 
-    // Channel mapping: Software channel index -> {J connector, Sharpie label}
-    const CHANNEL_LABELS = [
-        {j: 4, sharpie: 4}, // Software CH1 (index 0)
-        {j: 7, sharpie: 2}, // Software CH2 (index 1)
-        {j: 3, sharpie: 3}, // Software CH3 (index 2)
-        {j: 8, sharpie: 1}, // Software CH4 (index 3)
-        {j: 2, sharpie: 8}, // Software CH5 (index 4)
-        {j: 5, sharpie: 6}, // Software CH6 (index 5)
-        {j: 1, sharpie: 7}, // Software CH7 (index 6)
-        {j: 6, sharpie: 5}  // Software CH8 (index 7)
-    ];
+    // Channel mapping: Software channel index -> {J connector}
+    // Sequential order (CH1...CH8) corresponds to these J connectors
+    const CHANNEL_J_MAP = [4, 7, 3, 8, 2, 5, 1, 6];
 
     function getChannelLabel(chIdx) {
-        const info = CHANNEL_LABELS[chIdx];
-        return `J${info.j} - Ch${info.sharpie}`;
+        const jNum = CHANNEL_J_MAP[chIdx];
+        return `J${jNum} - CH${chIdx + 1}`;
     }
 
     // Sweep state
@@ -50,16 +42,16 @@
     let IBW_MHZ = 250;
     let FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
     
-    // Helper to get channel index from name (e.g., "I3" -> 3)
-    function getRfChannel(name) { return parseInt(name.slice(1)); }
+    // Helper to get channel index from name (e.g., "I1" -> 0)
+    function getRfChannel(name) { return parseInt(name.slice(1)) - 1; }
 
     // We still need this list for the Charts to map data correctly
     const COMPONENT_NAMES = [
-        'I0', 'Q0', 'I1', 'Q1', 'I2', 'Q2', 'I3', 'Q3', 
-        'I4', 'Q4', 'I5', 'Q5', 'I6', 'Q6', 'I7', 'Q7'
+        'I1', 'Q1', 'I2', 'Q2', 'I3', 'Q3', 'I4', 'Q4', 
+        'I5', 'Q5', 'I6', 'Q6', 'I7', 'Q7', 'I8', 'Q8'
     ];
     
-    let activeComponents = ['I0', 'Q0'];
+    let activeComponents = ['I1', 'Q1'];
     let ws;
     
     // --- Source Selection & Transport Logic ---
@@ -267,7 +259,7 @@
         
         boxes.forEach(box => {
             if(box.checked) {
-                const idx = box.value;
+                const idx = parseInt(box.value) + 1;
                 activeComponents.push(`I${idx}`);
                 activeComponents.push(`Q${idx}`);
             }
@@ -361,17 +353,17 @@
                 width: width, height: 300,
                 scales: {
                     // CHANGE 1: Use functions for range to check global overrides
-                    x: { 
-                        time: false, 
-                        range: (u, min, max) => timeScaleX ? [timeScaleX.min, timeScaleX.max] : [0, SAMPLE_SIZE] 
+                    x: {
+                        time: false,
+                        range: (u, min, max) => timeScaleX ? [timeScaleX.min, timeScaleX.max] : [0, SAMPLE_SIZE]
                     },
-                    y: { 
-                        range: (u, min, max) => timeScaleY ? [timeScaleY.min, timeScaleY.max] : [-2100, 2100] 
+                    y: {
+                        range: (u, min, max) => timeScaleY ? [timeScaleY.min, timeScaleY.max] : [-2100, 2100]
                     }
                 },
                 axes: [
-                    { label: "Sample Index", labelSize: 20, stroke: "#ccc" },
-                    { label: "Amplitude (ADC counts)", labelSize: 20, stroke: "#ccc", space: 40 }
+                    { label: "Sample Index", labelSize: 20, stroke: "#ccc", grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } },
+                    { label: "Amplitude (ADC counts)", labelSize: 20, stroke: "#ccc", space: 40, grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } }
                 ],
                 series: seriesTime
             }, dataTime, document.getElementById('chart-time'));
@@ -392,7 +384,7 @@
             // 1. Complex Traces (Indices 1-8)
             RF_CHANNELS.forEach(ch => {
                 dataFFT.push(new Array(FFT_SIZE).fill(-150));
-                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                const isActive = activeComponents.includes(`I${ch+1}`) || activeComponents.includes(`Q${ch+1}`);
                 seriesFFT.push({
                     label: getChannelLabel(ch) + " (C)", stroke: getRandomColor(ch),
                     width: 2, show: isActive && fftComplex
@@ -402,7 +394,7 @@
             // 2. I-Only Traces (Indices 9-16)
             RF_CHANNELS.forEach(ch => {
                 dataFFT.push(new Array(FFT_SIZE).fill(-150));
-                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                const isActive = activeComponents.includes(`I${ch+1}`) || activeComponents.includes(`Q${ch+1}`);
                 seriesFFT.push({
                     label: getChannelLabel(ch) + " (I)", stroke: getRandomColor(ch),
                     width: 1, show: isActive && fftI, dash: [5, 5]
@@ -412,7 +404,7 @@
             // 3. Q-Only Traces (Indices 17-24)
             RF_CHANNELS.forEach(ch => {
                 dataFFT.push(new Array(FFT_SIZE).fill(-150));
-                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                const isActive = activeComponents.includes(`I${ch+1}`) || activeComponents.includes(`Q${ch+1}`);
                 seriesFFT.push({
                     label: getChannelLabel(ch) + " (Q)", stroke: getRandomColor(ch),
                     width: 1, show: isActive && fftQ, dash: [2, 2]
@@ -446,8 +438,8 @@
                     }
                 },
                 axes: [
-                    { label: "Frequency (MHz)", stroke: "#ccc", values: (self, splits) => splits.map(v => v.toFixed(3)) },
-                    { label: "Power (dBm)", stroke: "#ccc", space: 40 }
+                    { label: "Frequency (MHz)", stroke: "#ccc", values: (self, splits) => splits.map(v => v.toFixed(3)), grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } },
+                    { label: "Power (dBm)", stroke: "#ccc", space: 40, grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } }
                 ],
                 series: seriesFFT,
                 cursor: { focus: { prox: 5 } }
@@ -1118,6 +1110,71 @@
         }
     }
 
+    // --- Recording Logic ---
+    let isRecording = false;
+
+    async function toggleRecording() {
+        if (isRecording) {
+            // Stop
+             try {
+                await fetch('/api/record/stop', { method: 'POST' });
+            } catch (e) {
+                console.error(e);
+            }
+        } else {
+            // Start
+            const samples = parseInt(document.getElementById('recordSamples').value);
+            if (isNaN(samples) || samples <= 0) {
+                alert("Invalid sample count");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/record/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ samples: samples })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Failed to start recording");
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    }
+
+    function updateRecordingUI(recording, filename, current, total) {
+        isRecording = recording;
+        const btn = document.getElementById('recordBtn');
+        const status = document.getElementById('recordStatus');
+        const bar = document.getElementById('recordProgress');
+
+        if (recording) {
+            btn.innerText = "Stop";
+            btn.className = "btn-danger";
+            btn.style.background = "#e6194b";
+            if (filename) status.innerText = `Recording: ${filename}`;
+            
+            if (total > 0) {
+                const pct = (current / total) * 100;
+                bar.style.width = pct + "%";
+            }
+        } else {
+            btn.innerText = "Record";
+            btn.className = "btn-primary";
+            btn.style.background = "#4363d8"; // Restore primary color
+            status.innerText = "Ready";
+            bar.style.width = "0%";
+            
+            // Refresh file list if we just finished
+            if (filename) {
+                fetchReplayFiles();
+            }
+        }
+    }
+
     // --- Replay Mode Functions ---
     let replayModeActive = false;
     let replayFiles = [];
@@ -1427,6 +1484,16 @@
                         const totalSamples = Math.floor(msg.total / 32);
                         document.getElementById('replaySampleInput').value = currentSample;
                         document.getElementById('replaySampleTotal').innerText = `Total: ${totalSamples}`;
+                    } else if (msg.type === "recording_status") {
+                        updateRecordingUI(msg.recording, msg.filename, msg.current, msg.total);
+                        if (!msg.recording && msg.finished) {
+                            alert("Recording Finished");
+                            fetchReplayFiles();
+                        }
+                    } else if (msg.type === "recording_progress") {
+                        const bar = document.getElementById('recordProgress');
+                        const pct = (msg.current / msg.total) * 100;
+                        bar.style.width = pct + "%";
                     }
                 } catch (e) {
                      console.error("Parse error:", e);

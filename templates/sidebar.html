@@ -182,6 +182,18 @@
         <div class="content" style="max-height: 1000px;"> <!-- Default Open -->
             <div class="content-inner">
                 <div class="control-group">
+                    <label>Record Data</label>
+                    <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+                        <input type="number" id="recordSamples" value="100000" step="1000" placeholder="Samples">
+                        <button id="recordBtn" onclick="toggleRecording()" class="btn-primary" style="width: auto;">Record</button>
+                    </div>
+                    <div id="recordStatus" style="font-size: 11px; color: #aaa;"></div>
+                    <div class="progress-bar" style="width: 100%; height: 4px; background: #333; margin-top: 5px; border-radius: 2px;">
+                        <div id="recordProgress" style="width: 0%; height: 100%; background: #e6194b; transition: width 0.2s;"></div>
+                    </div>
+                </div>
+
+                <div class="control-group">
                     <label>Upload .bin File</label>
                     <input type="file" id="replayFileInput" accept=".bin" style="width: 100%; padding: 5px; background: #444; border: 1px solid #666; border-radius: 4px; color: white; margin-bottom: 5px;">
                     <button onclick="uploadReplayFile()" class="btn-primary">Upload File</button>
