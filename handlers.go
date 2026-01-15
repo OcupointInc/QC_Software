@@ -573,3 +573,70 @@ func broadcastFileList() {
 		"files": files,
 	})
 }
+
+func handleReplaySeek(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	var req struct {
+		Position *float64 `json:"position"` // 0.0 to 1.0
+		Sample   *int64   `json:"sample"`   // Absolute sample index
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	serverState.mu.Lock()
+	defer serverState.mu.Unlock()
+
+	if len(serverState.ReplayData) == 0 {
+		http.Error(w, "No replay data loaded", 400)
+		return
+	}
+
+	totalBytes := len(serverState.ReplayData)
+	var newOffset int
+
+	if req.Sample != nil {
+		// Calculate from sample index (32 bytes per sample frame: 8ch * 4bytes)
+		newOffset = int(*req.Sample) * 32
+	} else if req.Position != nil {
+		pos := *req.Position
+		// Clamp position
+		if pos < 0 {
+			pos = 0
+		}
+		if pos > 1 {
+			pos = 1
+		}
+		newOffset = int(pos * float64(totalBytes))
+	} else {
+		// No valid param
+		http.Error(w, "Missing position or sample", 400)
+		return
+	}
+
+	// Align to 32 bytes (8 channels * 4 bytes/sample)
+	newOffset = (newOffset / 32) * 32
+
+	if newOffset >= totalBytes {
+		newOffset = 0
+		if totalBytes > 32 {
+			newOffset = totalBytes - 32
+		}
+	} else if newOffset < 0 {
+		newOffset = 0
+	}
+
+	serverState.ReplayOffset = newOffset
+	serverState.ForceReplayUpdate = true
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"offset":  newOffset,
+		"sample":  newOffset / 32,
+	})
+}

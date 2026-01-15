@@ -82,6 +82,7 @@ func runServer(port int, devicePath string, targetSize int) {
 	http.HandleFunc("/api/replay/state", handleReplayState)
 	http.HandleFunc("/api/replay/toggle", handleReplayToggle)
 	http.HandleFunc("/api/replay/clear", handleReplayClear)
+	http.HandleFunc("/api/replay/seek", handleReplaySeek)
 
 	// WebSocket streaming endpoint
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +119,7 @@ func runServer(port int, devicePath string, targetSize int) {
 					Mode     string   `json:"mode"`
 					FPS      int      `json:"fps"`
 					FFTSize  int      `json:"fft_size"`
+					FFTTypes []string `json:"fft_types"`
 					// New control fields
 					Type    string `json:"type"`
 					Enabled *bool  `json:"enabled"`
@@ -143,6 +145,9 @@ func runServer(port int, devicePath string, targetSize int) {
 					if config.FFTSize > 0 {
 						serverState.FFTSize = config.FFTSize
 					}
+					if len(config.FFTTypes) > 0 {
+						serverState.FFTTypes = config.FFTTypes
+					}
 					serverState.mu.Unlock()
 				}
 			}
@@ -167,15 +172,19 @@ func streamData(conn *websocket.Conn, devicePath string) {
 	const bytesPerSample = 4 // 2 bytes I + 2 bytes Q per channel
 	const sampleSize = 1024  // samples for time domain display
 
+	frameCounter := 0
+
 	for {
 		serverState.mu.RLock()
 		fps := serverState.StreamFPS
 		fftSize := serverState.FFTSize
 		mode := serverState.StreamMode
 		channels := serverState.Channels
+		fftTypes := serverState.FFTTypes
 		replayMode := serverState.ReplayMode
 		replayData := serverState.ReplayData
 		streamingEnabled := serverState.StreamingEnabled
+		forceReplayUpdate := serverState.ForceReplayUpdate
 		serverState.mu.RUnlock()
 
 		if fps <= 0 {
@@ -184,7 +193,7 @@ func streamData(conn *websocket.Conn, devicePath string) {
 		frameInterval := time.Second / time.Duration(fps)
 
 		// Check if we should be streaming anything at all
-		if !replayMode && !streamingEnabled {
+		if !replayMode && !streamingEnabled && !forceReplayUpdate {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -198,7 +207,7 @@ func streamData(conn *websocket.Conn, devicePath string) {
 
 		buf := make([]byte, bytesNeeded)
 
-		if replayMode && len(replayData) > 0 {
+		if (replayMode || forceReplayUpdate) && len(replayData) > 0 {
 			// Close device if it was open
 			if deviceOpen {
 				unix.Close(fd)
@@ -208,7 +217,25 @@ func streamData(conn *websocket.Conn, devicePath string) {
 
 			// Read from replay buffer (loop)
 			serverState.mu.Lock()
+			// Reset force flag if it was set
+			if serverState.ForceReplayUpdate {
+				serverState.ForceReplayUpdate = false
+			}
 			offset := serverState.ReplayOffset
+			
+			// Send progress update occasionally
+			frameCounter++
+			if frameCounter%10 == 0 {
+				totalSize := len(replayData)
+				progress := float64(offset) / float64(totalSize)
+				conn.WriteJSON(map[string]interface{}{
+					"type":     "replay_progress",
+					"progress": progress,
+					"offset":   offset,
+					"total":    totalSize,
+				})
+			}
+
 			for i := 0; i < bytesNeeded; i++ {
 				buf[i] = replayData[offset]
 				offset = (offset + 1) % len(replayData)
@@ -316,36 +343,84 @@ func streamData(conn *websocket.Conn, devicePath string) {
 
 		// Send FFT data if requested
 		if mode == "fft" || mode == "both" {
+			// Determine enabled FFTs
+			doComplex, doI, doQ := false, false, false
+			if len(fftTypes) == 0 {
+				doComplex = true // Default
+			} else {
+				for _, t := range fftTypes {
+					switch t {
+					case "complex":
+						doComplex = true
+					case "i":
+						doI = true
+					case "q":
+						doQ = true
+					}
+				}
+			}
+
+			zeros := make([]int16, fftSize)
+
 			for ch := 0; ch < numChannels; ch++ {
 				if !activeChannels[ch] {
 					continue
 				}
-				// Compute FFT for this channel
-				fftResult := computeFFT(channelI[ch][:fftSize], channelQ[ch][:fftSize], fftSize)
 
-				// DEBUG: Print peak info for Ch0 occasionally to verify DSP
-                if ch == 0 {
-                    maxVal := -200.0
-                    maxBin := 0
-                    for i, v := range fftResult {
-                        if v > maxVal {
-                            maxVal = v
-                            maxBin = i
-                        }
-                    }
-                    log.Printf("[DEBUG] Ch0 Peak: %.1f dBm at Bin %d (Freq roughly %.2f MHz relative)", maxVal, maxBin, float64(maxBin-fftSize/2)/float64(fftSize)*float64(serverState.StreamFPS*fftSize)) // FPS*Size is not sample rate.
-                    // Just log Bin and dBm.
-                    log.Printf("[DEBUG] Ch0 FFT Peak: %.2f dBm at Bin %d", maxVal, maxBin)
-                }
+				if doComplex {
+					// Compute FFT for this channel
+					fftResult := computeFFT(channelI[ch][:fftSize], channelQ[ch][:fftSize], fftSize)
 
-				// FFT header is 128 + channel number
-				fftHeader := byte(128 + ch)
-				outBuf = append(outBuf, fftHeader)
-				for _, val := range fftResult {
-					b := make([]byte, 2)
-					// Cast int16 directly - this preserves negative values correctly
-					binary.LittleEndian.PutUint16(b, uint16(int16(val)))
-					outBuf = append(outBuf, b...)
+					// DEBUG: Print peak info for Ch0 occasionally to verify DSP
+					if ch == 0 {
+						maxVal := -200.0
+						maxBin := 0
+						for i, v := range fftResult {
+							if v > maxVal {
+								maxVal = v
+								maxBin = i
+							}
+						}
+						log.Printf("[DEBUG] Ch0 FFT Peak: %.2f dBm at Bin %d", maxVal, maxBin)
+					}
+
+					// FFT header is 128 + channel number
+					fftHeader := byte(128 + ch)
+					outBuf = append(outBuf, fftHeader)
+					for _, val := range fftResult {
+						b := make([]byte, 2)
+						// Cast int16 directly - this preserves negative values correctly
+						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
+						outBuf = append(outBuf, b...)
+					}
+				}
+
+				if doI {
+					// Compute FFT for I component (Real input, Imaginary zero)
+					fftResult := computeFFT(channelI[ch][:fftSize], zeros, fftSize)
+
+					// FFT header for I is 136 + channel number
+					fftHeader := byte(136 + ch)
+					outBuf = append(outBuf, fftHeader)
+					for _, val := range fftResult {
+						b := make([]byte, 2)
+						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
+						outBuf = append(outBuf, b...)
+					}
+				}
+
+				if doQ {
+					// Compute FFT for Q component (Real input, Imaginary zero)
+					fftResult := computeFFT(channelQ[ch][:fftSize], zeros, fftSize)
+
+					// FFT header for Q is 144 + channel number
+					fftHeader := byte(144 + ch)
+					outBuf = append(outBuf, fftHeader)
+					for _, val := range fftResult {
+						b := make([]byte, 2)
+						binary.LittleEndian.PutUint16(b, uint16(int16(val)))
+						outBuf = append(outBuf, b...)
+					}
 				}
 			}
 		}

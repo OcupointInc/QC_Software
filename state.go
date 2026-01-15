@@ -23,14 +23,16 @@ type ServerState struct {
 	StreamMode       string   // "raw", "fft", "both"
 	StreamFPS        int      // frames per second
 	FFTSize          int      // 1024, 2048, 4096, 8192
+	FFTTypes         []string // "complex", "i", "q"
 	Channels         []string // active channels like ["I0", "Q0", "I1", "Q1"]
 	StreamingEnabled bool     // Controls if data is actually sent
 
 	// Replay mode
-	ReplayMode   bool
-	ReplayData   []byte
-	ReplayName   string
-	ReplayOffset int
+	ReplayMode        bool
+	ReplayData        []byte
+	ReplayName        string
+	ReplayOffset      int
+	ForceReplayUpdate bool
 }
 
 type SweepParams struct {
@@ -49,5 +51,6 @@ var serverState = &ServerState{
 	StreamMode:     "fft",
 	StreamFPS:      30,
 	FFTSize:        1024,
+	FFTTypes:       []string{"complex"},
 	Channels:       []string{"I0", "Q0"},
 }

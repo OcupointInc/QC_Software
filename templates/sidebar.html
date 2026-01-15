@@ -30,6 +30,15 @@
             </div>
 
             <div class="control-group">
+                <label style="margin-bottom: 5px; display: block;">FFT Components:</label>
+                <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                    <label style="font-weight: normal; font-size: 12px;"><input type="checkbox" id="fftComplex" checked onchange="updateConfig()"> Complex</label>
+                    <label style="font-weight: normal; font-size: 12px;"><input type="checkbox" id="fftI" onchange="updateConfig()"> I-Only</label>
+                    <label style="font-weight: normal; font-size: 12px;"><input type="checkbox" id="fftQ" onchange="updateConfig()"> Q-Only</label>
+                </div>
+            </div>
+
+            <div class="control-group">
                 <label for="streamRate">Update Rate: <span id="rateVal" style="color: #00ff00;">30</span> Hz</label>
                 <input type="range" id="streamRate" min="1" max="60" value="30" 
                     oninput="document.getElementById('rateVal').innerText = this.value" 
@@ -179,10 +188,25 @@
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px;">
                         <span>Size:</span>
-                        <span id="replayFileSize" style="font-weight: bold; color: #fff;">--</span>
-                    </div>
-                    <button onclick="clearReplaySelection()" class="btn-danger" style="width: 100%; margin-top: 5px;">Deselect File</button>
-                </div>
+                        		<span id="replayFileSize" style="font-weight: bold; color: #fff;">--</span>
+                        	</div>
+                        
+                        	<div style="margin-top: 10px; padding: 5px; background: #333; border-radius: 4px;">
+                        		<label style="color: #ccc; font-size: 11px;">Seek Position</label>
+                        		<input type="range" id="replaySeek" min="0" max="1000" value="0" style="width: 100%;" oninput="onSeekInput(this.value)" onchange="onSeekChange(this.value)">
+                        				<div style="display: flex; justify-content: space-between; color: #aaa; font-size: 10px;">
+                        					<span id="replayCurrentTime">0%</span>
+                        					<span>100%</span>
+                        				</div>
+                        				<div style="margin-top: 5px; display: flex; align-items: center; gap: 5px;">
+                        					<input type="number" id="replaySampleInput" placeholder="Sample #" style="width: 60px; padding: 2px; background: #222; border: 1px solid #555; color: white; font-size: 11px;">
+                        					<button onclick="jumpToSample()" style="padding: 2px 5px; font-size: 11px; cursor: pointer; background: #555; border: none; color: white; border-radius: 3px;">Go</button>
+                        				</div>
+                        				<div id="replaySampleTotal" style="color: #888; font-size: 10px; margin-top: 2px;">Total: 0</div>
+                        			</div>
+                        		
+                        			<button onclick="clearReplaySelection()" class="btn-danger" style="width: 100%; margin-top: 5px;">Deselect File</button>
+                        		                </div>
             </div>
         </div>
     </div> <!-- End Replay Controls -->

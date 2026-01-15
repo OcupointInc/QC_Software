@@ -277,6 +277,16 @@
         const fps = document.getElementById('streamRate').value;
         const rbwSelect = document.getElementById('rbwSelect');
         
+        // New FFT checkboxes
+        const fftComplex = document.getElementById('fftComplex') ? document.getElementById('fftComplex').checked : true;
+        const fftI = document.getElementById('fftI') ? document.getElementById('fftI').checked : false;
+        const fftQ = document.getElementById('fftQ') ? document.getElementById('fftQ').checked : false;
+        
+        let fftTypes = [];
+        if(fftComplex) fftTypes.push("complex");
+        if(fftI) fftTypes.push("i");
+        if(fftQ) fftTypes.push("q");
+        
         // Check if FFT size changed
         const newFFTSize = parseInt(rbwSelect ? rbwSelect.value : 1024);
         
@@ -293,7 +303,8 @@
                 channels: activeComponents,
                 mode: mode,
                 fps: parseInt(fps),
-                fft_size: FFT_SIZE // Send updated FFT size
+                fft_size: FFT_SIZE, // Send updated FFT size
+                fft_types: fftTypes
             };
             ws.send(JSON.stringify(payload));
         }
@@ -373,18 +384,42 @@
             });
             dataFFT = [xFFT];
             const seriesFFT = [{ label: "Frequency (MHz)" }];
+            
+            const fftComplex = document.getElementById('fftComplex') ? document.getElementById('fftComplex').checked : true;
+            const fftI = document.getElementById('fftI') ? document.getElementById('fftI').checked : false;
+            const fftQ = document.getElementById('fftQ') ? document.getElementById('fftQ').checked : false;
 
-            // Add Traces
+            // 1. Complex Traces (Indices 1-8)
             RF_CHANNELS.forEach(ch => {
-                dataFFT.push(new Array(FFT_SIZE).fill(-50));
+                dataFFT.push(new Array(FFT_SIZE).fill(-150));
                 const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
                 seriesFFT.push({
-                    label: getChannelLabel(ch), stroke: getRandomColor(ch),
-                    width: 2, show: isActive
+                    label: getChannelLabel(ch) + " (C)", stroke: getRandomColor(ch),
+                    width: 2, show: isActive && fftComplex
+                });
+            });
+            
+            // 2. I-Only Traces (Indices 9-16)
+            RF_CHANNELS.forEach(ch => {
+                dataFFT.push(new Array(FFT_SIZE).fill(-150));
+                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                seriesFFT.push({
+                    label: getChannelLabel(ch) + " (I)", stroke: getRandomColor(ch),
+                    width: 1, show: isActive && fftI, dash: [5, 5]
+                });
+            });
+            
+            // 3. Q-Only Traces (Indices 17-24)
+            RF_CHANNELS.forEach(ch => {
+                dataFFT.push(new Array(FFT_SIZE).fill(-150));
+                const isActive = activeComponents.includes(`I${ch}`) || activeComponents.includes(`Q${ch}`);
+                seriesFFT.push({
+                    label: getChannelLabel(ch) + " (Q)", stroke: getRandomColor(ch),
+                    width: 1, show: isActive && fftQ, dash: [2, 2]
                 });
             });
 
-            // Add Peaks
+            // 4. Peaks (Indices 25-32) - Only for Complex
             RF_CHANNELS.forEach(ch => {
                 dataFFT.push(new Array(FFT_SIZE).fill(null));
                 seriesFFT.push({
@@ -419,90 +454,16 @@
             }, dataFFT, document.getElementById('chart-fft'));
         }
     }
-
-    // --- WebSocket ---
-    function connect() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-        ws.binaryType = 'arraybuffer';
-
-        ws.onopen = () => {
-            document.getElementById('connectionStatus').innerText = "SYSTEM CONNECTED";
-            document.getElementById('connectionStatus').style.color = "#3cb44b";
-            updateConfig(); 
-            // Default to starting live stream? Or wait for user?
-            // Let's wait for user to hit START.
-        };
-
-        ws.onmessage = (event) => {
-            const statusEl = document.getElementById('connectionStatus'); // Reusing this for general status if needed
-            
-            if (typeof event.data === "string") {
-                try {
-                    const msg = JSON.parse(event.data);
-                    
-                    if (msg.type === "ddc_update") {
-                        document.getElementById('ddcFreqInput').value = msg.freq_mhz;
-                    } else if (msg.type === "siggen_freq_update") {
-                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz;
-                    } else if (msg.type === "siggen_power_update") {
-                        document.getElementById('sigGenPowerInput').value = msg.power_dbm;
-                    } else if (msg.type === "siggen_output_update") {
-                        const btn = document.getElementById('sigGenToggle');
-                        if (msg.enabled) {
-                            btn.innerText = "RF Output: ON";
-                            btn.className = "btn-success";
-                        } else {
-                            btn.innerText = "RF Output: OFF";
-                            btn.className = "btn-danger";
-                        }
-                    } else if (msg.type === "sweep_status") {
-                         if (msg.running) {
-                             setSweepRunningState(true);
-                             if (msg.params) {
-                                 document.getElementById('sweepStart').value = msg.params.start_mhz;
-                                 document.getElementById('sweepStop').value = msg.params.stop_mhz;
-                                 document.getElementById('sweepStep').value = msg.params.step_mhz;
-                                 document.getElementById('sweepDwell').value = msg.params.dwell_ms;
-                             }
-                         } else {
-                             setSweepRunningState(false);
-                         }
-                    } else if (msg.type === "sweep_progress") {
-                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz.toFixed(3);
-                        // Optional: update a specific sweep status element if visible
-                    } else if (msg.type === "replay_update") {
-                        updateReplayUI(msg.has_data, msg.filename || '', msg.size || 0, msg.replay_mode);
-                    } else if (msg.type === "replay_files") {
-                        updateFileList(msg.files || []);
-                    }
-                } catch (e) {
-                     console.error("Parse error:", e);
-                }
-            } else {
-                // Binary Data = Streaming
-                // We could update a "receiving data" indicator here if we wanted
-                parseAndPlot(event.data);
-            }
-        };
-        
-        ws.onclose = () => {
-            document.getElementById('connectionStatus').innerText = "CONNECTION LOST - RECONNECTING...";
-            document.getElementById('connectionStatus').style.color = "#e6194b";
-            // Auto-reconnect logic
-            if (!manuallyClosed) {
-                setTimeout(connect, 2000);
-            }
-        };
-    }
     
+    // ...
+
     function parseAndPlot(arrayBuffer) {
         const view = new DataView(arrayBuffer);
         let offset = 0;
         const BYTES_TIME = SAMPLE_SIZE * 2;
         const BYTES_FFT = FFT_SIZE * 2; 
 
-        // Object to store peaks for each channel
+        // Object to store peaks for each channel (only for complex)
         let channelPeaks = {};
 
         while (offset < arrayBuffer.byteLength) {
@@ -511,19 +472,22 @@
             offset += 1;
 
             if (headerID < 128) {
+                // Time Domain
                 if (uplotTime && offset + BYTES_TIME <= arrayBuffer.byteLength) {
                     const slice = arrayBuffer.slice(offset, offset + BYTES_TIME);
                     dataTime[headerID + 1] = new Int16Array(slice);
                     offset += BYTES_TIME;
                 } else offset += BYTES_TIME;
             } 
-            else {
+            else if (headerID >= 128 && headerID < 136) {
+                // Complex FFT (128-135)
                 const rfCh = headerID - 128;
                 if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
                     const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
                     const fftArray = new Int16Array(slice);
-                    dataFFT[rfCh + 1] = fftArray; // Update the line plot
+                    dataFFT[rfCh + 1] = fftArray; // Indices 1-8
 
+                    // Peak Tracking for Complex only
                     if (peakTrackingEnabled) {
                         let localMax = -9999;
                         let localIdx = 0;
@@ -535,14 +499,14 @@
                         }
 
                         // --- UPDATE PEAK MARKER ---
-                        // Create an array of nulls and put the max value at the peak index
+                        // Indices 25-32 for peaks (25 = Ch0 Peak, 1 + 24)
+                        const peakSeriesIdx = 25 + rfCh;
+                        
                         const markerArr = new Array(FFT_SIZE).fill(null);
                         markerArr[localIdx] = localMax;
+                        dataFFT[peakSeriesIdx] = markerArr;
 
-                        // RF Channels are 0-7, Trace series are 1-8, Marker series are 9-16
-                        dataFFT[rfCh + 9] = markerArr;
-
-                        // Update the Green Label info - convert bin to absolute frequency
+                        // Update the Green Label info
                         const bin = localIdx - (FFT_SIZE / 2);
                         const freqMHz = CENTER_FREQ_MHZ + (bin * FREQ_RES_MHZ);
                         channelPeaks[rfCh + 1] = {
@@ -550,11 +514,38 @@
                             freqMHz: freqMHz
                         };
                     } else {
-                        // Clear markers if tracking is disabled
-                        dataFFT[rfCh + 9] = new Array(FFT_SIZE).fill(null);
+                        // Clear markers
+                         dataFFT[25 + rfCh] = new Array(FFT_SIZE).fill(null);
                     }
                     offset += BYTES_FFT;
                 }
+            }
+            else if (headerID >= 136 && headerID < 144) {
+                 // I-Only FFT (136-143)
+                 const rfCh = headerID - 136;
+                 if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
+                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
+                    const fftArray = new Int16Array(slice);
+                    // Indices 9-16
+                    dataFFT[9 + rfCh] = fftArray;
+                    offset += BYTES_FFT;
+                 }
+            }
+            else if (headerID >= 144 && headerID < 152) {
+                 // Q-Only FFT (144-151)
+                 const rfCh = headerID - 144;
+                 if (uplotFFT && offset + BYTES_FFT <= arrayBuffer.byteLength) {
+                    const slice = arrayBuffer.slice(offset, offset + BYTES_FFT);
+                    const fftArray = new Int16Array(slice);
+                    // Indices 17-24
+                    dataFFT[17 + rfCh] = fftArray;
+                    offset += BYTES_FFT;
+                 }
+            }
+            else {
+                 // Unknown header, skip?
+                 // Should break or increment to avoid infinite loop if offset doesn't move
+                 break;
             }
         }
 
@@ -564,21 +555,16 @@
 
         if(uplotFFT) {
             uplotFFT.setData(dataFFT);
-
-            // --- Update Green Fixed-Width Label ---
+            // ... peak label update ...
             const labelEl = document.getElementById('peak-label');
             if (peakTrackingEnabled) {
                 let html = `<div style="color:#aaa; font-size:11px; margin-bottom:5px;">CHANNEL         POWER       FREQUENCY</div>`;
-
-                // Iterate 1-8 to keep them in order
                 for(let i = 1; i <= 8; i++) {
                     if (channelPeaks[i]) {
                         const peak = channelPeaks[i];
-                        // Format frequency with 3 decimal places
                         const freqStr = peak.freqMHz.toFixed(3);
-                        const chLabel = getChannelLabel(i - 1); // Convert 1-based to 0-based index
+                        const chLabel = getChannelLabel(i - 1);
                         const color = getRandomColor(i - 1);
-
                         html += `
                         <div class="peak-row">
                             <span class="peak-ch" style="color: ${color}">${chLabel}</span>
@@ -938,6 +924,46 @@
     let replayModeActive = false;
     let replayFiles = [];
     let selectedReplayFile = '';
+    let isSeeking = false;
+
+    function onSeekInput(val) {
+        isSeeking = true;
+        const pct = val / 10;
+        document.getElementById('replayCurrentTime').innerText = pct.toFixed(1) + "%";
+    }
+
+    function onSeekChange(val) {
+        isSeeking = false;
+        const pct = val / 1000.0;
+        seekReplay(pct);
+    }
+
+    async function jumpToSample() {
+        const val = parseInt(document.getElementById('replaySampleInput').value);
+        if (isNaN(val) || val < 0) return;
+        
+        try {
+            await fetch('/api/replay/seek', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sample: val })
+            });
+        } catch (e) {
+            console.error("Jump to sample failed", e);
+        }
+    }
+
+    async function seekReplay(position) {
+        try {
+            await fetch('/api/replay/seek', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ position: position })
+            });
+        } catch (e) {
+            console.error("Seek failed", e);
+        }
+    }
 
     async function uploadReplayFile() {
         const fileInput = document.getElementById('replayFileInput');
@@ -1117,6 +1143,20 @@
 
         // Update file list to show selection
         updateFileList(replayFiles);
+
+        if (hasData) {
+            // Calculate total samples from size
+            const totalSamples = Math.floor(size / 32);
+            document.getElementById('replaySampleTotal').innerText = `Total: ${totalSamples}`;
+        } else {
+            const slider = document.getElementById('replaySeek');
+            if (slider) {
+                slider.value = 0;
+                document.getElementById('replayCurrentTime').innerText = "0%";
+            }
+            document.getElementById('replaySampleInput').value = '';
+            document.getElementById('replaySampleTotal').innerText = 'Total: 0';
+        }
     }
 
     function formatBytes(bytes) {
@@ -1125,6 +1165,84 @@
         const sizes = ['B', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // --- WebSocket ---
+    function connect() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            document.getElementById('connectionStatus').innerText = "SYSTEM CONNECTED";
+            document.getElementById('connectionStatus').style.color = "#3cb44b";
+            updateConfig(); 
+        };
+
+        ws.onmessage = (event) => {
+            if (typeof event.data === "string") {
+                try {
+                    const msg = JSON.parse(event.data);
+                    
+                    if (msg.type === "ddc_update") {
+                        document.getElementById('ddcFreqInput').value = msg.freq_mhz;
+                    } else if (msg.type === "siggen_freq_update") {
+                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz;
+                    } else if (msg.type === "siggen_power_update") {
+                        document.getElementById('sigGenPowerInput').value = msg.power_dbm;
+                    } else if (msg.type === "siggen_output_update") {
+                        const btn = document.getElementById('sigGenToggle');
+                        if (msg.enabled) {
+                            btn.innerText = "RF Output: ON";
+                            btn.className = "btn-success";
+                        } else {
+                            btn.innerText = "RF Output: OFF";
+                            btn.className = "btn-danger";
+                        }
+                    } else if (msg.type === "sweep_status") {
+                         if (msg.running) {
+                             setSweepRunningState(true);
+                             if (msg.params) {
+                                 document.getElementById('sweepStart').value = msg.params.start_mhz;
+                                 document.getElementById('sweepStop').value = msg.params.stop_mhz;
+                                 document.getElementById('sweepStep').value = msg.params.step_mhz;
+                                 document.getElementById('sweepDwell').value = msg.params.dwell_ms;
+                             }
+                         } else {
+                             setSweepRunningState(false);
+                         }
+                    } else if (msg.type === "sweep_progress") {
+                        document.getElementById('sigGenFreqInput').value = msg.freq_mhz.toFixed(3);
+                    } else if (msg.type === "replay_update") {
+                        updateReplayUI(msg.has_data, msg.filename || '', msg.size || 0, msg.replay_mode);
+                    } else if (msg.type === "replay_files") {
+                        updateFileList(msg.files || []);
+                    } else if (msg.type === "replay_progress") {
+                        if (!isSeeking) {
+                            const slider = document.getElementById('replaySeek');
+                            if (slider) {
+                                slider.value = msg.progress * 1000;
+                                document.getElementById('replayCurrentTime').innerText = (msg.progress * 100).toFixed(1) + "%";
+                            }
+                        }
+                        const currentSample = Math.floor(msg.offset / 32);
+                        const totalSamples = Math.floor(msg.total / 32);
+                        document.getElementById('replaySampleInput').value = currentSample;
+                        document.getElementById('replaySampleTotal').innerText = `Total: ${totalSamples}`;
+                    }
+                } catch (e) {
+                     console.error("Parse error:", e);
+                }
+            } else {
+                parseAndPlot(event.data);
+            }
+        };
+        
+        ws.onclose = () => {
+            document.getElementById('connectionStatus').innerText = "CONNECTION LOST - RECONNECTING...";
+            document.getElementById('connectionStatus').style.color = "#e6194b";
+            setTimeout(connect, 2000);
+        };
     }
 
     // Initialize
