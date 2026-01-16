@@ -57,7 +57,7 @@ func main() {
 	flag.Var(&size, "s", "Capture size (e.g., 100MB, 1GB, 4096B)")
 
 	// CLI-specific flags
-	outputFile := flag.String("o", "capture.parquet", "Output filename (CLI mode only)")
+	outputFile := flag.String("o", "capture.bin", "Output filename (CLI mode only)")
 	configFile := flag.String("c", "", "Hardware configuration JSON file (CLI mode only)")
 
 	// Server-specific flags

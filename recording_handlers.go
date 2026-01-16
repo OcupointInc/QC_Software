@@ -64,8 +64,8 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		os.Mkdir(dataDir, 0755)
 	}
 
-	// Generate filename: capture_YYYYMMDD_HHMMSS.parquet
-	filename := fmt.Sprintf("capture_%s.parquet", time.Now().Format("20060102_150405"))
+	// Generate filename: capture_YYYYMMDD_HHMMSS.bin
+	filename := fmt.Sprintf("capture_%s.bin", time.Now().Format("20060102_150405"))
 	filepath := filepath.Join(dataDir, filename)
 
 	f, err := os.Create(filepath)
@@ -75,14 +75,11 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Wrap in Parquet Adapter
-	parquetAdapter := NewParquetWriteAdapter(f, req.Config)
-
 	serverState.Recording = true
 	serverState.RecordingFile = filename
 	serverState.RecordingSamples = req.Samples
 	serverState.RecordingCurrent = 0
-	serverState.RecordingFileHandle = parquetAdapter
+	serverState.RecordingFileHandle = f
 	serverState.mu.Unlock()
 
 	// Broadcast start

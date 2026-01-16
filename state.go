@@ -1,7 +1,7 @@
 package main
 
 import (
-	"io"
+	"os"
 	"sync"
 )
 
@@ -42,7 +42,7 @@ type ServerState struct {
 	RecordingFile      string
 		RecordingSamples   int // Total samples to record
 		RecordingCurrent   int // Samples recorded so far
-		RecordingFileHandle io.WriteCloser
+		RecordingFileHandle *os.File
 	
 		// System
 		DevicePath string
