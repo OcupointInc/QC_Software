@@ -1,5 +1,6 @@
 # User requested ignores
 .claude/
+.gemini/
 data/
 
 # Binaries and Logs

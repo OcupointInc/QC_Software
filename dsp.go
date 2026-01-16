@@ -31,7 +31,7 @@ func computeFFT(iSamples, qSamples []int16, fftSize int) []float64 {
 
 	// For I/Q (complex) FFT, full scale sine appears in ONE bin (no pos/neg split)
 	// Reference: full-scale amplitude = 2048, after windowed FFT = 2048 * windowSum
-	const fullScaleAmplitude = 2048.0
+	const fullScaleAmplitude = 32768.0
 	const fullScaleDBm = 3.9
 	reference := fullScaleAmplitude * windowSum
 

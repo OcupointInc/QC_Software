@@ -56,6 +56,17 @@
             </div>
 
             <div class="control-group">
+                <label for="windowSelect">Window Function:</label>
+                <select id="windowSelect" onchange="updateConfig()">
+                    <option value="rectangular">Rectangular</option>
+                    <option value="hamming">Hamming</option>
+                    <option value="flattop">Flat Top</option>
+                    <option value="hanning">Hanning</option>
+                    <option value="blackman" selected>Blackman</option>
+                </select>
+            </div>
+
+            <div class="control-group">
                 <button id="peakToggle" onclick="togglePeakTracking()" style="background: #555; color: white;">Enable Peak Tracking</button>
             </div>
             

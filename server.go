@@ -59,6 +59,10 @@ func runServer(port int, devicePath string, targetSize int) {
 	commandDevice := "/dev/xdma0_user"
 	initHardwareController(commandDevice)
 
+	serverState.mu.Lock()
+	serverState.DevicePath = devicePath
+	serverState.mu.Unlock()
+
 	upgrader := websocket.Upgrader{
 		CheckOrigin:     func(r *http.Request) bool { return true },
 		ReadBufferSize:  1024,
@@ -284,6 +288,7 @@ func runGlobalStreamLoop(devicePath string) {
 		replayData := serverState.ReplayData
 		streamingEnabled := serverState.StreamingEnabled
 		forceReplayUpdate := serverState.ForceReplayUpdate
+		isRecording := serverState.Recording
 		serverState.mu.RUnlock()
 
 		if fps <= 0 {
@@ -292,6 +297,17 @@ func runGlobalStreamLoop(devicePath string) {
 		frameInterval := time.Second / time.Duration(fps)
 
 		// Check if we should be streaming anything at all
+		// If Recording is active, we must yield the device!
+		if isRecording {
+			if deviceOpen {
+				unix.Close(fd)
+				deviceOpen = false
+				fd = -1
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
 		if !replayMode && !streamingEnabled && !forceReplayUpdate {
 			time.Sleep(100 * time.Millisecond)
 			continue
@@ -386,51 +402,6 @@ func runGlobalStreamLoop(devicePath string) {
 				continue // Incomplete frame
 			}
 		}
-
-		// Handle Recording
-		serverState.mu.Lock()
-		if serverState.Recording && serverState.RecordingFileHandle != nil {
-			// Write buffer to file
-			_, err := serverState.RecordingFileHandle.Write(buf)
-			if err != nil {
-				log.Printf("Recording write error: %v", err)
-				serverState.Recording = false
-				serverState.RecordingFileHandle.Close()
-				serverState.RecordingFileHandle = nil
-				go broadcastJSON(map[string]interface{}{
-					"type":      "recording_status",
-					"recording": false,
-					"error":     err.Error(),
-				})
-			} else {
-				// Update progress
-				// bytes / (numChannels * bytesPerSample) = samples
-				samplesWritten := len(buf) / (numChannels * bytesPerSample)
-				serverState.RecordingCurrent += samplesWritten
-
-				// Check limit
-				if serverState.RecordingCurrent >= serverState.RecordingSamples {
-					serverState.Recording = false
-					serverState.RecordingFileHandle.Close()
-					serverState.RecordingFileHandle = nil
-					go broadcastJSON(map[string]interface{}{
-						"type":      "recording_status",
-						"recording": false,
-						"finished":  true,
-					})
-				} else {
-					// Broadcast progress every ~100 frames to avoid spam
-					if frameCounter%100 == 0 {
-						go broadcastJSON(map[string]interface{}{
-							"type":    "recording_progress",
-							"current": serverState.RecordingCurrent,
-							"total":   serverState.RecordingSamples,
-						})
-					}
-				}
-			}
-		}
-		serverState.mu.Unlock()
 
 		// Parse into channel data
 		// Data format: for each sample, 8 channels * (I16 + Q16) = 32 bytes

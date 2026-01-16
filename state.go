@@ -40,12 +40,15 @@ type ServerState struct {
 	// Recording
 	Recording          bool
 	RecordingFile      string
-	RecordingSamples   int // Total samples to record
-	RecordingCurrent   int // Samples recorded so far
-	RecordingFileHandle *os.File
-}
-
-type SweepParams struct {
+		RecordingSamples   int // Total samples to record
+		RecordingCurrent   int // Samples recorded so far
+		RecordingFileHandle *os.File
+	
+		// System
+		DevicePath string
+	}
+	
+	type SweepParams struct{
 	StartMHz float64 `json:"start_mhz"`
 	StopMHz  float64 `json:"stop_mhz"`
 	StepMHz  float64 `json:"step_mhz"`

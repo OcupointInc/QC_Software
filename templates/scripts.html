@@ -289,11 +289,20 @@
         
         // Check if FFT size changed
         const newFFTSize = parseInt(rbwSelect ? rbwSelect.value : 1024);
+        const windowType = document.getElementById('windowSelect') ? document.getElementById('windowSelect').value : 'blackman';
         
         if (newFFTSize !== FFT_SIZE) {
             FFT_SIZE = newFFTSize;
             FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
-            //console.log(`Updated FFT Size: ${FFT_SIZE}, RBW: ${FREQ_RES_MHZ * 1000} kHz`);
+            // Force engine recreate or update
+            if (fftEngine) {
+                 fftEngine = new SimpleFFT(FFT_SIZE, windowType);
+            }
+        } else {
+             // Size didn't change, but window might have
+             if (fftEngine) {
+                 fftEngine.setWindowType(windowType);
+             }
         }
 
         setupCharts(); 
@@ -456,8 +465,9 @@
     }
     // --- FFT Implementation (Simple Radix-2) ---
     class SimpleFFT {
-        constructor(size) {
+        constructor(size, windowType = 'blackman') {
             this.size = size;
+            this.windowType = windowType;
             this.reverseTable = new Uint32Array(size);
             let limit = 1;
             let bit = size >> 1;
@@ -476,12 +486,46 @@
                 this.cosTable[i] = Math.cos(-2 * Math.PI * i / size);
             }
             
-            // Pre-calculate Window (Blackman)
-            this.window = new Float64Array(size);
+            this.calculateWindow();
+        }
+
+        calculateWindow() {
+            this.window = new Float64Array(this.size);
             this.windowSum = 0;
-            for(let i=0; i<size; i++) {
-                this.window[i] = 0.42 - 0.5*Math.cos(2*Math.PI*i/(size-1)) + 0.08*Math.cos(4*Math.PI*i/(size-1));
-                this.windowSum += this.window[i];
+            const N = this.size;
+            
+            for(let i=0; i<N; i++) {
+                let val = 1.0;
+                switch(this.windowType) {
+                    case 'rectangular':
+                        val = 1.0;
+                        break;
+                    case 'hamming':
+                        val = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (N - 1));
+                        break;
+                    case 'hanning':
+                        val = 0.5 * (1 - Math.cos(2 * Math.PI * i / (N - 1)));
+                        break;
+                    case 'flattop':
+                        val = 0.21557895 - 0.41663158 * Math.cos(2 * Math.PI * i / (N - 1)) + 
+                              0.277263158 * Math.cos(4 * Math.PI * i / (N - 1)) - 
+                              0.083578947 * Math.cos(6 * Math.PI * i / (N - 1)) + 
+                              0.006947368 * Math.cos(8 * Math.PI * i / (N - 1));
+                        break;
+                    case 'blackman':
+                    default:
+                        val = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)) + 0.08 * Math.cos(4 * Math.PI * i / (N - 1));
+                        break;
+                }
+                this.window[i] = val;
+                this.windowSum += val;
+            }
+        }
+        
+        setWindowType(type) {
+            if (this.windowType !== type) {
+                this.windowType = type;
+                this.calculateWindow();
             }
         }
 
@@ -535,6 +579,11 @@
             const half = this.size / 2;
             const fullScaleAmp = 32768.0;  // 16-bit ADC: 2^15
             const fullScaleDBm = 3.9;      // Full scale input power
+            
+            // For power normalization, we should divide by the sum of window values (Coherent Gain)
+            // But usually for spectral density we might use energy gain (sum of squares).
+            // For pure amplitude accuracy of peaks, divide by Coherent Gain (sum of window).
+            // Let's stick with windowSum which acts as the Coherent Gain.
             const ref = fullScaleAmp * this.windowSum;
             
             for(let i=0; i<this.size; i++) {
@@ -543,6 +592,10 @@
                 const mag = Math.sqrt(real[idx]*real[idx] + imag[idx]*imag[idx]);
                 
                 if (mag > 0) {
+                    // Multiply by 2 because we discard negative frequencies in real-valued FFTs?
+                    // No, this is complex FFT.
+                    // But maybe we need to account for power being split or window loss.
+                    // Let's keep existing logic: 20*log10(mag / ref) + offset.
                     out[i] = 20 * Math.log10(mag / ref) + fullScaleDBm;
                 } else {
                     out[i] = -150.0;
@@ -668,8 +721,9 @@
         let startFFT = performance.now(); // Start FFT timer
         if (uplotFFT) {
             // Check Engine
+            const windowType = document.getElementById('windowSelect') ? document.getElementById('windowSelect').value : 'blackman';
             if (!fftEngine || fftEngine.size !== FFT_SIZE) {
-                fftEngine = new SimpleFFT(FFT_SIZE);
+                fftEngine = new SimpleFFT(FFT_SIZE, windowType);
             }
             
             const fftComplex = document.getElementById('fftComplex') ? document.getElementById('fftComplex').checked : true;
@@ -801,42 +855,6 @@
             }
         } catch (error) {
             console.error('Failed to fetch RF config:', error);
-        }
-    }
-
-    // Update DDC frequency
-    async function updateDDCFrequency() {
-        const freqInput = document.getElementById('ddcFreqInput');
-        const statusEl = document.getElementById('ddcStatus');
-        const freq = parseFloat(freqInput.value);
-
-        statusEl.innerText = 'Updating...';
-        statusEl.style.color = 'yellow';
-
-        try {
-            const response = await fetch('/api/ddc/frequency', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ freq_mhz: freq })
-            });
-
-            const data = await response.json();
-
-            if (response.ok && data.success) {
-                statusEl.innerText = `✓ DDC set to ${data.ddc_freq_mhz} MHz`;
-                statusEl.style.color = '#3cb44b';
-                setTimeout(() => { statusEl.innerText = ''; }, 3000);
-
-                // Refresh RF config to update frequency axis
-                await fetchRFConfig();
-            } else {
-                statusEl.innerText = `✗ Error: ${data.error || 'Failed'}`;
-                statusEl.style.color = '#e6194b';
-            }
-        } catch (error) {
-            statusEl.innerText = `✗ Error: ${error.message}`;
-            statusEl.style.color = '#e6194b';
-            console.error('Failed to update DDC frequency:', error);
         }
     }
 
@@ -1014,19 +1032,6 @@
             }
         } catch (error) {
             console.error('Failed to fetch sweep state:', error);
-        }
-    }
-
-    // Fetch and populate DDC frequency
-    async function fetchDDCFrequency() {
-        try {
-            const response = await fetch('/api/ddc/frequency');
-            const data = await response.json();
-            if (data.ddc_freq_mhz !== undefined) {
-                document.getElementById('ddcFreqInput').value = data.ddc_freq_mhz;
-            }
-        } catch (error) {
-            console.error('Failed to fetch DDC frequency:', error);
         }
     }
 
@@ -1688,9 +1693,7 @@
                 try {
                     const msg = JSON.parse(event.data);
                     
-                    if (msg.type === "ddc_update") {
-                        document.getElementById('ddcFreqInput').value = msg.freq_mhz;
-                    } else if (msg.type === "ddc_freq_update") {
+                    if (msg.type === "ddc_freq_update") {
                         // Handle DDC frequency update from hardware (e.g., on stream start)
                         if (msg.ddc_index === 0) {
                             document.getElementById('ddc0FreqInput').value = msg.freq_mhz;
@@ -1776,7 +1779,6 @@
     });
 
     // Fetch initial values
-    fetchDDCFrequency();
     fetchSigGenState();
     fetchPSUState(); // Initial fetch
     fetchSweepState();
