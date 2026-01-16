@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -66,9 +67,9 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 
 	// Generate filename: capture_YYYYMMDD_HHMMSS.bin
 	filename := fmt.Sprintf("capture_%s.bin", time.Now().Format("20060102_150405"))
-	filepath := filepath.Join(dataDir, filename)
+	fullPath := filepath.Join(dataDir, filename)
 
-	f, err := os.Create(filepath)
+	f, err := os.Create(fullPath)
 	if err != nil {
 		serverState.mu.Unlock()
 		http.Error(w, "Failed to create file: "+err.Error(), 500)
@@ -81,6 +82,25 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 	serverState.RecordingCurrent = 0
 	serverState.RecordingFileHandle = f
 	serverState.mu.Unlock()
+
+	// Save Metadata
+	metaFilename := strings.TrimSuffix(filename, ".bin") + ".json"
+	metaPath := filepath.Join(dataDir, metaFilename)
+	
+	var currentConfig *HardwareConfig
+	if hwController != nil {
+		currentConfig = hwController.GetConfig()
+	}
+
+	metadata := CaptureMetadata{
+		Timestamp:  time.Now().Format(time.RFC3339),
+		SampleRate: 250000000,
+		Config:     currentConfig,
+	}
+	
+	if metaBytes, err := json.MarshalIndent(metadata, "", "  "); err == nil {
+		os.WriteFile(metaPath, metaBytes, 0644)
+	}
 
 	// Broadcast start
 	go broadcastJSON(map[string]interface{}{

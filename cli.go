@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dma/pkg/dma"
@@ -76,5 +77,42 @@ func runCLI(devicePath string, targetSize int, outputFilename string, configFile
 		fmt.Printf("DONE\n")
 		fmt.Printf("Save Duration:   %v\n", elapsed)
 		fmt.Printf("Save Throughput: %.2f MB/s\n", throughput)
+
+		// Save Metadata
+		metaFilename := strings.TrimSuffix(outputFilename, ".bin") 
+		if metaFilename == outputFilename {
+			metaFilename += ".json"
+		} else {
+			metaFilename += ".json"
+		}
+		
+		// If hwController is active (initialized), get config. Otherwise empty/nil?
+		// runCLI initializes it ONLY if configFile is present.
+		// If configFile is NOT present, hwController might be nil or default.
+		// We should ensure it's initialized if we want to save state, OR we accept it might be nil.
+		// If user didn't pass -c, we might not have touched hardware in this process?
+		// Actually, if we are in CLI mode and didn't pass -c, we might rely on previous state or defaults.
+		// But initHardwareController creates the global 'hwController'.
+		// If config file wasn't passed, 'initHardwareController' wasn't called in the code above!
+		// Check the code above: "if configFile != "" { ... initHardwareController ... }"
+		// So if no config file, we can't get hardware state unless we init it.
+		// For correctness, we should probably init it anyway to read state?
+		// Or just skip config if not initialized.
+		
+		var currentConfig *HardwareConfig
+		if hwController != nil {
+			currentConfig = hwController.GetConfig()
+		}
+
+		metadata := CaptureMetadata{
+			Timestamp:  time.Now().Format(time.RFC3339),
+			SampleRate: 250000000,
+			Config:     currentConfig,
+		}
+
+		if metaBytes, err := json.MarshalIndent(metadata, "", "  "); err == nil {
+			os.WriteFile(metaFilename, metaBytes, 0644)
+			fmt.Printf("Metadata saved to: %s\n", metaFilename)
+		}
 	}
 }

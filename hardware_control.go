@@ -475,6 +475,52 @@ func (hc *HardwareController) ApplyConfig(config *HardwareConfig) error {
 	return nil
 }
 
+// GetConfig returns the current hardware configuration state
+func (hc *HardwareController) GetConfig() *HardwareConfig {
+	hc.mu.RLock()
+	defer hc.mu.RUnlock()
+
+	// Helper to get value safely
+	getVal := func(id ParamID) int {
+		if p, ok := hc.params[id]; ok {
+			return p.Value
+		}
+		return 0
+	}
+
+	// Helper pointers
+	intPtr := func(i int) *int { return &i }
+	boolPtr := func(b bool) *bool { return &b }
+
+	// Construct config from params
+	cfg := &HardwareConfig{
+		DDC0FreqMHz: intPtr(getVal(DDC0_FMIX)),
+		DDC1FreqMHz: intPtr(getVal(DDC1_FMIX)),
+		DDC2FreqMHz: intPtr(getVal(DDC2_FMIX)),
+		DDC0Enable:  boolPtr(getVal(DDC0_EN) == 1),
+		DDC1Enable:  boolPtr(getVal(DDC1_EN) == 1),
+		DDC2Enable:  boolPtr(getVal(DDC2_EN) == 1),
+		Attenuation: intPtr(getVal(ATTENUATION_BVAL)),
+		Calibration: boolPtr(getVal(CAL_EN) == 1),
+		SystemEnable: boolPtr(getVal(SYSTEM_EN) == 1),
+	}
+
+	// Determine active filter
+	if getVal(LP500MHZ_EN) == 1 {
+		s := "500mhz"; cfg.Filter = &s
+	} else if getVal(LP1GHZ_EN) == 1 {
+		s := "1ghz"; cfg.Filter = &s
+	} else if getVal(LP2GHZ_EN) == 1 {
+		s := "2ghz"; cfg.Filter = &s
+	} else if getVal(BYPASS_EN) == 1 {
+		s := "bypass"; cfg.Filter = &s
+	} else {
+		s := "unknown"; cfg.Filter = &s
+	}
+
+	return cfg
+}
+
 // writePCIeBytes writes a 32-bit value to PCIe device at offset
 func (hc *HardwareController) writePCIeBytes(data uint32, offset int) error {
 	f, err := os.OpenFile(hc.commandDevice, os.O_WRONLY, 0)

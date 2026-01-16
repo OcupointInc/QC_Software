@@ -45,11 +45,18 @@ type ServerState struct {
 		RecordingFileHandle *os.File
 	
 		// System
-		DevicePath string
-	}
-	
-	type SweepParams struct{
-	StartMHz float64 `json:"start_mhz"`
+			DevicePath string
+		}
+		
+		// CaptureMetadata represents the metadata saved alongside a capture
+		type CaptureMetadata struct {
+			Timestamp   string          `json:"timestamp"`
+			SampleRate  int             `json:"sample_rate"` // Always 250000000
+			Config      *HardwareConfig `json:"config"`
+		}
+		
+		type SweepParams struct {
+			StartMHz float64 `json:"start_mhz"`
 	StopMHz  float64 `json:"stop_mhz"`
 	StepMHz  float64 `json:"step_mhz"`
 	DwellMS  float64 `json:"dwell_ms"`
