@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"math"
 	"net/http"
 )
+
+const DesignClockMHz = 250.0
+
 
 var hwController *HardwareController
 
@@ -20,10 +25,37 @@ func initHardwareController(commandDevice string) {
 	// Sync server state with hardware DDC0 frequency
 	if ddc0Freq, err := hwController.GetParameter(DDC0_FMIX); err == nil {
 		serverState.mu.Lock()
-		serverState.DDCFreqMHz = float64(ddc0Freq)
+		// Convert hardware value (design clock domain) to real frequency
+		serverState.DDCFreqMHz = float64(ddc0Freq) * (serverState.IBWMHZ / DesignClockMHz)
 		serverState.mu.Unlock()
-		log.Printf("Initialized center frequency from hardware: %.3f MHz", float64(ddc0Freq))
+		log.Printf("Initialized center frequency from hardware: %.3f MHz", serverState.DDCFreqMHz)
 	}
+}
+
+// setDDCFrequency sets the DDC frequency with clock domain scaling
+func setDDCFrequency(ddcIndex int, freqMHz float64) (float64, error) {
+	var paramID ParamID
+	switch ddcIndex {
+	case 0:
+		paramID = DDC0_FMIX
+	case 1:
+		paramID = DDC1_FMIX
+	case 2:
+		paramID = DDC2_FMIX
+	default:
+		return 0, fmt.Errorf("invalid DDC index: %d", ddcIndex)
+	}
+
+	serverState.mu.RLock()
+	actualClock := serverState.IBWMHZ
+	serverState.mu.RUnlock()
+
+	hwVal := int(math.Round(freqMHz * (DesignClockMHz / actualClock)))
+
+	// Calculate achieved frequency and round to nearest integer for the UI
+	achievedMHz := math.Round(float64(hwVal) * (actualClock / DesignClockMHz))
+
+	return achievedMHz, hwController.UpdateParameter(paramID, hwVal)
 }
 
 // DDC Frequency handler
@@ -43,20 +75,11 @@ func handleDDCFreqUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var paramID ParamID
-	switch req.DDCIndex {
-	case 0:
-		paramID = DDC0_FMIX
-	case 1:
-		paramID = DDC1_FMIX
-	case 2:
-		paramID = DDC2_FMIX
-	default:
-		http.Error(w, "Invalid DDC index", http.StatusBadRequest)
-		return
-	}
+	// Ensure we are working with integer requested frequency
+	req.FreqMHz = math.Round(req.FreqMHz)
 
-	if err := hwController.UpdateParameter(paramID, int(req.FreqMHz)); err != nil {
+	actualFreq, err := setDDCFrequency(req.DDCIndex, req.FreqMHz)
+	if err != nil {
 		log.Printf("Failed to update DDC frequency: %v", err)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
@@ -68,21 +91,21 @@ func handleDDCFreqUpdate(w http.ResponseWriter, r *http.Request) {
 	// Update server state center frequency if DDC0
 	if req.DDCIndex == 0 {
 		serverState.mu.Lock()
-		serverState.DDCFreqMHz = req.FreqMHz
+		serverState.DDCFreqMHz = actualFreq
 		serverState.mu.Unlock()
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
 		"ddc_index": req.DDCIndex,
-		"freq_mhz":  req.FreqMHz,
+		"freq_mhz":  int(actualFreq),
 	})
 
 	// Broadcast update to all clients
 	go broadcastJSON(map[string]interface{}{
 		"type":      "ddc_freq_update",
 		"ddc_index": req.DDCIndex,
-		"freq_mhz":  req.FreqMHz,
+		"freq_mhz":  int(actualFreq),
 	})
 }
 
@@ -364,10 +387,16 @@ func handleHardwareState(w http.ResponseWriter, r *http.Request) {
 		activeFilter = "bypass"
 	}
 
+	// Reverse scale frequencies for display and round to nearest integer
+	serverState.mu.RLock()
+	actualClock := serverState.IBWMHZ
+	serverState.mu.RUnlock()
+	scale := actualClock / DesignClockMHz
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ddc0_freq_mhz":  ddc0Freq,
-		"ddc1_freq_mhz":  ddc1Freq,
-		"ddc2_freq_mhz":  ddc2Freq,
+		"ddc0_freq_mhz":  int(math.Round(float64(ddc0Freq) * scale)),
+		"ddc1_freq_mhz":  int(math.Round(float64(ddc1Freq) * scale)),
+		"ddc2_freq_mhz":  int(math.Round(float64(ddc2Freq) * scale)),
 		"ddc0_enabled":   ddc0En == 1,
 		"ddc1_enabled":   ddc1En == 1,
 		"ddc2_enabled":   ddc2En == 1,

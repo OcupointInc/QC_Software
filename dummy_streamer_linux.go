@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -33,7 +35,7 @@ func RunSimulator(devicePath string) {
 	const (
 		numChannels     = 8
 		samplesPerWrite = 8192
-		sampleRate      = 250e6
+		sampleRate      = 2445e5
 		targetFreq      = 26e6 
 		amplitude       = 2040.0
 	)

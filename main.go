@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-//go:embed templates/*
+//go:embed templates/* static/*
 var templatesFS embed.FS
 
 // sizeFlag custom type to handle units like KB, MB, GB
@@ -111,7 +111,7 @@ func main() {
 
 	// Calculate target size based on precedence
 	const bytesPerSample = 32
-	const sampleRate = 250000000
+	const sampleRate = 244400000
 
 	if *duration > 0 {
 		totalSamples := int64((*duration).Seconds() * float64(sampleRate))

@@ -51,7 +51,7 @@ type ServerState struct {
 		// CaptureMetadata represents the metadata saved alongside a capture
 		type CaptureMetadata struct {
 			Timestamp   string          `json:"timestamp"`
-			SampleRate  int             `json:"sample_rate"` // Always 250000000
+			SampleRate  int             `json:"sample_rate"` // Always 244400000
 			Config      *HardwareConfig `json:"config"`
 		}
 		
@@ -64,7 +64,7 @@ type ServerState struct {
 
 var serverState = &ServerState{
 	DDCFreqMHz:     125.0,
-	IBWMHZ:         250.0,
+	IBWMHZ:         244.4,
 	SigGenFreqMHz:  100.0,
 	SigGenPowerDBm: -10.0,
 	SigGenRFOutput: false,

@@ -1,5 +1,5 @@
 {{ define "scripts.html" }}
-<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
+<script src="/static/js/uPlot.iife.min.js"></script>
 
 <script>
     // Collapsible Logic
@@ -47,7 +47,7 @@
 
     // RF Configuration (fetched from backend)
     let CENTER_FREQ_MHZ = 125;
-    let IBW_MHZ = 250;
+    let IBW_MHZ = 244.4;
     let FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
     
     // Helper to get channel index from name (e.g., "I1" -> 0)
@@ -665,7 +665,7 @@
         calculateDBm(real, imag) {
             const out = new Float64Array(this.size);
             const half = this.size / 2;
-            const fullScaleAmp = 32768.0;  // 16-bit ADC: 2^15
+            const fullScaleAmp = 13500.0;  // 16-bit ADC: 2^15
             const fullScaleDBm = 3.9;      // Full scale input power
             
             // For power normalization, we should divide by the sum of window values (Coherent Gain)

@@ -141,40 +141,7 @@
                                    onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(0)">
                             <button onclick="updateHWDDCFrequency(0)" class="btn-success" style="width: auto;">Set</button>
                         </div>
-                        <div style="margin-top: 5px;">
-                            <label style="font-weight: normal; font-size: 12px;">
-                                <input type="checkbox" id="ddc0Enable" onchange="updateHWDDCEnable(0)"> Enable DDC 0
-                            </label>
-                        </div>
                         <span id="ddc0Status" style="font-size: 11px;"></span>
-                    </div>
-
-                    <div class="control-group">
-                        <label>DDC 1 Frequency (MHz)</label>
-                        <div style="display: flex; gap: 5px;">
-                            <input type="number" id="ddc1FreqInput" value="0" step="1"
-                                   onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(1)">
-                            <button onclick="updateHWDDCFrequency(1)" class="btn-success" style="width: auto;">Set</button>
-                        </div>
-                        <div style="margin-top: 5px;">
-                            <label style="font-weight: normal; font-size: 12px;">
-                                <input type="checkbox" id="ddc1Enable" onchange="updateHWDDCEnable(1)"> Enable DDC 1
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="control-group">
-                        <label>DDC 2 Frequency (MHz)</label>
-                        <div style="display: flex; gap: 5px;">
-                            <input type="number" id="ddc2FreqInput" value="0" step="1"
-                                   onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(2)">
-                            <button onclick="updateHWDDCFrequency(2)" class="btn-success" style="width: auto;">Set</button>
-                        </div>
-                        <div style="margin-top: 5px;">
-                            <label style="font-weight: normal; font-size: 12px;">
-                                <input type="checkbox" id="ddc2Enable" onchange="updateHWDDCEnable(2)"> Enable DDC 2
-                            </label>
-                        </div>
                     </div>
 
                     <hr>

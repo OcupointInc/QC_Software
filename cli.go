@@ -106,7 +106,7 @@ func runCLI(devicePath string, targetSize int, outputFilename string, configFile
 
 		metadata := CaptureMetadata{
 			Timestamp:  time.Now().Format(time.RFC3339),
-			SampleRate: 250000000,
+			SampleRate: 244400000,
 			Config:     currentConfig,
 		}
 
