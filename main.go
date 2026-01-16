@@ -57,7 +57,8 @@ func main() {
 	flag.Var(&size, "s", "Capture size (e.g., 100MB, 1GB, 4096B)")
 
 	// CLI-specific flags
-	outputFile := flag.String("o", "capture.bin", "Output filename (CLI mode only)")
+	outputFile := flag.String("o", "capture.parquet", "Output filename (CLI mode only)")
+	configFile := flag.String("c", "", "Hardware configuration JSON file (CLI mode only)")
 
 	// Server-specific flags
 	isServer := flag.Bool("server", false, "Run in WebSocket server mode")
@@ -107,6 +108,6 @@ func main() {
 	if *isServer {
 		runServer(*port, *device, targetSize)
 	} else {
-		runCLI(*device, targetSize, *outputFile)
+		runCLI(*device, targetSize, *outputFile, *configFile)
 	}
 }

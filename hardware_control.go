@@ -87,6 +87,19 @@ type Parameter struct {
 	Value int
 }
 
+type HardwareConfig struct {
+	DDC0FreqMHz *int    `json:"ddc0_freq_mhz"`
+	DDC1FreqMHz *int    `json:"ddc1_freq_mhz"`
+	DDC2FreqMHz *int    `json:"ddc2_freq_mhz"`
+	DDC0Enable  *bool   `json:"ddc0_enable"`
+	DDC1Enable  *bool   `json:"ddc1_enable"`
+	DDC2Enable  *bool   `json:"ddc2_enable"`
+	Attenuation *int    `json:"attenuation_db"`
+	Filter      *string `json:"filter"`
+	Calibration *bool   `json:"calibration_mode"`
+	SystemEnable *bool  `json:"system_enable"`
+}
+
 // HardwareController manages FPGA parameter control via PCIe
 type HardwareController struct {
 	commandDevice string
@@ -297,7 +310,7 @@ func (hc *HardwareController) UpdateParameter(paramID ParamID, value int) error 
 
 // updateBRAM signals hardware that a parameter changed
 func (hc *HardwareController) updateBRAM(paramIndex int) error {
-	log.Printf("Updating BRAM parameter with index: %d", paramIndex)
+	// log.Printf("Updating BRAM parameter with index: %d", paramIndex)
 
 	// Set param change request bit
 	status, err := hc.readPCIeBytes(STATUS_ADDR)
@@ -402,6 +415,64 @@ func (hc *HardwareController) GetParameter(paramID ParamID) (int, error) {
 	}
 
 	return param.Value, nil
+}
+
+// ApplyConfig applies all settings from a HardwareConfig struct
+func (hc *HardwareController) ApplyConfig(config *HardwareConfig) error {
+	if config == nil {
+		return nil
+	}
+
+	// Helper to log errors but continue
+	apply := func(id ParamID, val int, name string) {
+		if err := hc.UpdateParameter(id, val); err != nil {
+			log.Printf("Failed to set %s: %v", name, err)
+		}
+	}
+
+	// DDC Frequencies
+	if config.DDC0FreqMHz != nil { apply(DDC0_FMIX, *config.DDC0FreqMHz, "DDC0 Freq") }
+	if config.DDC1FreqMHz != nil { apply(DDC1_FMIX, *config.DDC1FreqMHz, "DDC1 Freq") }
+	if config.DDC2FreqMHz != nil { apply(DDC2_FMIX, *config.DDC2FreqMHz, "DDC2 Freq") }
+
+	// DDC Enables
+	if config.DDC0Enable != nil {
+		val := 0; if *config.DDC0Enable { val = 1 }; apply(DDC0_EN, val, "DDC0 Enable")
+	}
+	if config.DDC1Enable != nil {
+		val := 0; if *config.DDC1Enable { val = 1 }; apply(DDC1_EN, val, "DDC1 Enable")
+	}
+	if config.DDC2Enable != nil {
+		val := 0; if *config.DDC2Enable { val = 1 }; apply(DDC2_EN, val, "DDC2 Enable")
+	}
+
+	// Attenuation
+	if config.Attenuation != nil { apply(ATTENUATION_BVAL, *config.Attenuation, "Attenuation") }
+
+	// Calibration & System
+	if config.Calibration != nil {
+		val := 0; if *config.Calibration { val = 1 }; apply(CAL_EN, val, "Calibration")
+	}
+	if config.SystemEnable != nil {
+		val := 0; if *config.SystemEnable { val = 1 }; apply(SYSTEM_EN, val, "System Enable")
+	}
+
+	// Filter
+	if config.Filter != nil {
+		// Disable all first
+		hc.UpdateParameter(LP500MHZ_EN, 0)
+		hc.UpdateParameter(LP1GHZ_EN, 0)
+		hc.UpdateParameter(LP2GHZ_EN, 0)
+		hc.UpdateParameter(BYPASS_EN, 0)
+
+		switch *config.Filter {
+		case "500mhz": apply(LP500MHZ_EN, 1, "Filter 500MHz")
+		case "1ghz":   apply(LP1GHZ_EN, 1, "Filter 1GHz")
+		case "2ghz":   apply(LP2GHZ_EN, 1, "Filter 2GHz")
+		case "bypass": apply(BYPASS_EN, 1, "Filter Bypass")
+		}
+	}
+	return nil
 }
 
 // writePCIeBytes writes a 32-bit value to PCIe device at offset

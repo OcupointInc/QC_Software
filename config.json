@@ -1,0 +1,6 @@
+{
+    "ddc0_freq_mhz": 150,
+    "attenuation_db": 0,
+    "filter": "bypass",
+    "system_enable": true
+}

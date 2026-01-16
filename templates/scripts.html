@@ -260,6 +260,94 @@
         uplotFFT.setScale('y', { min: defaultYMin, max: defaultYMax });
     }
 
+    function autoscaleTimeY() {
+        if (!uplotTime || dataTime.length === 0) return;
+
+        let globalMin = Infinity;
+        let globalMax = -Infinity;
+
+        // dataTime structure: [x_axis, ch1, ch2, ...]
+        // Start from index 1 to skip X axis
+        for (let i = 1; i < dataTime.length; i++) {
+            const series = dataTime[i];
+            if (!series) continue;
+            
+            // Check visibility
+            const seriesOpts = uplotTime.series[i];
+            if (!seriesOpts || !seriesOpts.show) continue;
+
+            for (let j = 0; j < series.length; j++) {
+                const val = series[j];
+                if (val < globalMin) globalMin = val;
+                if (val > globalMax) globalMax = val;
+            }
+        }
+
+        if (globalMin === Infinity || globalMax === -Infinity) return;
+
+        // Add 10% margin
+        const range = globalMax - globalMin;
+        const margin = range * 0.1 || 100; // Default margin if range is 0
+
+        let newMin = globalMin - margin;
+        let newMax = globalMax + margin;
+
+        // Round nicely
+        newMin = Math.floor(newMin);
+        newMax = Math.ceil(newMax);
+
+        document.getElementById('timeYMin').value = newMin;
+        document.getElementById('timeYMax').value = newMax;
+
+        timeScaleY = { min: newMin, max: newMax };
+        uplotTime.setScale('y', timeScaleY);
+    }
+
+    function autoscaleFFTY() {
+        if (!uplotFFT || dataFFT.length === 0) return;
+
+        let globalMin = Infinity;
+        let globalMax = -Infinity;
+
+        // dataFFT structure: [x_axis, series1, series2...]
+        for (let i = 1; i < dataFFT.length; i++) {
+            const series = dataFFT[i];
+            if (!series) continue;
+
+            // Check visibility
+            const seriesOpts = uplotFFT.series[i];
+            if (!seriesOpts || !seriesOpts.show) continue;
+
+            for (let j = 0; j < series.length; j++) {
+                const val = series[j];
+                // Ignore nulls and placeholders (like -150 initialization)
+                if (val !== null && val > -140) {
+                     if (val < globalMin) globalMin = val;
+                     if (val > globalMax) globalMax = val;
+                }
+            }
+        }
+
+        if (globalMin === Infinity || globalMax === -Infinity) return;
+
+        // Add 10% margin (in dB scale, usually adding static dB is better, but let's do range %)
+        const range = globalMax - globalMin;
+        const margin = range * 0.1 || 10; 
+
+        let newMin = globalMin - margin;
+        let newMax = globalMax + margin;
+        
+        // Round
+        newMin = Math.floor(newMin);
+        newMax = Math.ceil(newMax);
+
+        document.getElementById('fftYMin').value = newMin;
+        document.getElementById('fftYMax').value = newMax;
+
+        fftScaleY = { min: newMin, max: newMax };
+        uplotFFT.setScale('y', fftScaleY);
+    }
+
     // --- Configuration Logic ---
     function updateConfig() {
         const boxes = cbContainer.querySelectorAll('input[type="checkbox"]');

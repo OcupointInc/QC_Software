@@ -13,7 +13,8 @@ import (
 )
 
 type RecordStartRequest struct {
-	Samples int `json:"samples"`
+	Samples int             `json:"samples"`
+	Config  *HardwareConfig `json:"config"`
 }
 
 func handleRecordStart(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +34,20 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply hardware configuration if provided
+	if req.Config != nil && hwController != nil {
+		if err := hwController.ApplyConfig(req.Config); err != nil {
+			log.Printf("Error applying hardware config: %v", err)
+		}
+		
+		// Update server state center frequency if DDC0 changes
+		if req.Config.DDC0FreqMHz != nil {
+			serverState.mu.Lock()
+			serverState.DDCFreqMHz = float64(*req.Config.DDC0FreqMHz)
+			serverState.mu.Unlock()
+		}
+	}
+
 	serverState.mu.Lock()
 	// Do NOT defer unlock here because we want to unlock before starting goroutine (though logically fine, better explicitly manage if we accessed complex state)
 	// But defer is fine for this short block.
@@ -49,8 +64,8 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		os.Mkdir(dataDir, 0755)
 	}
 
-	// Generate filename: capture_YYYYMMDD_HHMMSS.bin
-	filename := fmt.Sprintf("capture_%s.bin", time.Now().Format("20060102_150405"))
+	// Generate filename: capture_YYYYMMDD_HHMMSS.parquet
+	filename := fmt.Sprintf("capture_%s.parquet", time.Now().Format("20060102_150405"))
 	filepath := filepath.Join(dataDir, filename)
 
 	f, err := os.Create(filepath)
@@ -60,11 +75,14 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wrap in Parquet Adapter
+	parquetAdapter := NewParquetWriteAdapter(f, req.Config)
+
 	serverState.Recording = true
 	serverState.RecordingFile = filename
 	serverState.RecordingSamples = req.Samples
 	serverState.RecordingCurrent = 0
-	serverState.RecordingFileHandle = f
+	serverState.RecordingFileHandle = parquetAdapter
 	serverState.mu.Unlock()
 
 	// Broadcast start
