@@ -55,6 +55,10 @@ func (c *Client) writePump() {
 
 // runServer starts the WebSocket server with embedded HTML
 func runServer(port int, devicePath string, targetSize int) {
+	// Initialize hardware controller
+	commandDevice := "/dev/xdma0_user"
+	initHardwareController(commandDevice)
+
 	upgrader := websocket.Upgrader{
 		CheckOrigin:     func(r *http.Request) bool { return true },
 		ReadBufferSize:  1024,
@@ -105,6 +109,15 @@ func runServer(port int, devicePath string, targetSize int) {
 	http.HandleFunc("/api/psu/output/2/voltage", handlePSUVoltage)
 	http.HandleFunc("/api/psu/output/1/current", handlePSUCurrent)
 	http.HandleFunc("/api/psu/output/2/current", handlePSUCurrent)
+
+	// Hardware control endpoints
+	http.HandleFunc("/api/hardware/state", handleHardwareState)
+	http.HandleFunc("/api/hardware/ddc/freq", handleDDCFreqUpdate)
+	http.HandleFunc("/api/hardware/ddc/enable", handleDDCEnable)
+	http.HandleFunc("/api/hardware/attenuation", handleAttenuationUpdate)
+	http.HandleFunc("/api/hardware/filter", handleFilterSelect)
+	http.HandleFunc("/api/hardware/calibration", handleCalibrationMode)
+	http.HandleFunc("/api/hardware/system", handleSystemEnable)
 
 	// Replay mode endpoints
 	http.HandleFunc("/api/replay/upload", handleReplayUpload)

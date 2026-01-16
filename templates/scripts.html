@@ -1110,6 +1110,236 @@
         }
     }
 
+    // --- Hardware Control Logic ---
+    async function updateHWDDCFrequency(ddcIndex) {
+        const freqInput = document.getElementById(`ddc${ddcIndex}FreqInput`);
+        const freq = parseFloat(freqInput.value);
+
+        try {
+            const response = await fetch('/api/hardware/ddc/freq', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ddc_index: ddcIndex, freq_mhz: freq })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                console.log(`DDC ${ddcIndex} frequency set to ${freq} MHz`);
+
+                // If DDC 0, update FFT center frequency and X-axis
+                if (ddcIndex === 0) {
+                    updateFFTFrequencyAxis(freq);
+                }
+            } else {
+                alert(`Failed to set DDC ${ddcIndex} frequency: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Failed to update DDC frequency:', error);
+            alert('Failed to update DDC frequency');
+        }
+    }
+
+    // Update FFT X-axis frequency labels without regenerating chart
+    function updateFFTFrequencyAxis(centerFreqMHz) {
+        CENTER_FREQ_MHZ = centerFreqMHz;
+        FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
+
+        // Only update the FFT X-axis scale input fields
+        const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
+        const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
+        document.getElementById('fftXMin').value = minFreq;
+        document.getElementById('fftXMax').value = maxFreq;
+
+        // Don't touch the plot - let the user click "Apply" if they want to update the view
+    }
+
+    async function updateHWDDCEnable(ddcIndex) {
+        const enableBox = document.getElementById(`ddc${ddcIndex}Enable`);
+        const enabled = enableBox.checked;
+
+        try {
+            const response = await fetch('/api/hardware/ddc/enable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ddc_index: ddcIndex, enabled: enabled })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                console.log(`DDC ${ddcIndex} ${enabled ? 'enabled' : 'disabled'}`);
+            } else {
+                alert(`Failed to update DDC ${ddcIndex}: ${data.error || 'Unknown error'}`);
+                enableBox.checked = !enabled; // Revert on failure
+            }
+        } catch (error) {
+            console.error('Failed to update DDC enable:', error);
+            alert('Failed to update DDC enable');
+            enableBox.checked = !enabled; // Revert on failure
+        }
+    }
+
+    async function updateHWAttenuation() {
+        const attenuationSlider = document.getElementById('attenuationSlider');
+        const attenuation = parseInt(attenuationSlider.value);
+
+        try {
+            const response = await fetch('/api/hardware/attenuation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ attenuation_db: attenuation })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                console.log(`Attenuation set to ${attenuation} dB`);
+            } else {
+                alert(`Failed to set attenuation: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Failed to update attenuation:', error);
+            alert('Failed to update attenuation');
+        }
+    }
+
+    async function updateHWFilter() {
+        const filterSelect = document.getElementById('filterSelect');
+        const filter = filterSelect.value;
+
+        try {
+            const response = await fetch('/api/hardware/filter', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filter: filter })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                console.log(`Filter set to ${filter}`);
+            } else {
+                alert(`Failed to set filter: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Failed to update filter:', error);
+            alert('Failed to update filter');
+        }
+    }
+
+    async function updateHWCalibration() {
+        const calBox = document.getElementById('calibrationMode');
+        const enabled = calBox.checked;
+
+        try {
+            const response = await fetch('/api/hardware/calibration', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                console.log(`Calibration mode ${enabled ? 'enabled' : 'disabled'}`);
+            } else {
+                alert(`Failed to update calibration mode: ${data.error || 'Unknown error'}`);
+                calBox.checked = !enabled; // Revert on failure
+            }
+        } catch (error) {
+            console.error('Failed to update calibration mode:', error);
+            alert('Failed to update calibration mode');
+            calBox.checked = !enabled; // Revert on failure
+        }
+    }
+
+    async function toggleHWSystem() {
+        const btn = document.getElementById('systemEnableBtn');
+        const isCurrentlyOn = btn.innerText.includes("ON");
+        const newState = !isCurrentlyOn;
+
+        try {
+            const response = await fetch('/api/hardware/system', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: newState })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                if (newState) {
+                    btn.innerText = "System: ON";
+                    btn.className = "btn-success";
+                } else {
+                    btn.innerText = "System: OFF";
+                    btn.className = "btn-danger";
+                }
+            } else {
+                alert(`Failed to toggle system: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Failed to toggle system:', error);
+            alert('Failed to toggle system');
+        }
+    }
+
+    async function fetchHardwareState() {
+        try {
+            const response = await fetch('/api/hardware/state');
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            // Update DDC controls (only if not currently focused/being edited)
+            const ddc0Input = document.getElementById('ddc0FreqInput');
+            if (document.activeElement !== ddc0Input) {
+                ddc0Input.value = data.ddc0_freq_mhz || 0;
+            }
+
+            const ddc1Input = document.getElementById('ddc1FreqInput');
+            if (document.activeElement !== ddc1Input) {
+                ddc1Input.value = data.ddc1_freq_mhz || 0;
+            }
+
+            const ddc2Input = document.getElementById('ddc2FreqInput');
+            if (document.activeElement !== ddc2Input) {
+                ddc2Input.value = data.ddc2_freq_mhz || 0;
+            }
+
+            // Update FFT center frequency if DDC0 frequency changed
+            const newCenterFreq = data.ddc0_freq_mhz || 0;
+            if (CENTER_FREQ_MHZ !== newCenterFreq && uplotFFT) {
+                updateFFTFrequencyAxis(newCenterFreq);
+            }
+
+            document.getElementById('ddc0Enable').checked = data.ddc0_enabled || false;
+            document.getElementById('ddc1Enable').checked = data.ddc1_enabled || false;
+            document.getElementById('ddc2Enable').checked = data.ddc2_enabled || false;
+
+            // Update attenuation (only if slider not being dragged)
+            const attenSlider = document.getElementById('attenuationSlider');
+            const atten = data.attenuation_db || 0;
+            if (document.activeElement !== attenSlider) {
+                attenSlider.value = atten;
+            }
+            document.getElementById('attenVal').innerText = atten;
+
+            // Update filter
+            document.getElementById('filterSelect').value = data.active_filter || '500mhz';
+
+            // Update calibration
+            document.getElementById('calibrationMode').checked = data.cal_enabled || false;
+
+            // Update system enable
+            const sysBtn = document.getElementById('systemEnableBtn');
+            if (data.system_enabled) {
+                sysBtn.innerText = "System: ON";
+                sysBtn.className = "btn-success";
+            } else {
+                sysBtn.innerText = "System: OFF";
+                sysBtn.className = "btn-danger";
+            }
+        } catch (error) {
+            // Silent fail to avoid spam
+        }
+    }
+
     // --- Recording Logic ---
     let isRecording = false;
 
@@ -1523,7 +1753,9 @@
     fetchSweepState();
     fetchReplayFiles(); // Initial file list fetch
     fetchReplayState(); // Initial replay state fetch
+    fetchHardwareState(); // Initial hardware state fetch
     setInterval(fetchPSUState, 2000); // Poll every 2 seconds
+    setInterval(fetchHardwareState, 2000); // Poll hardware state every 2 seconds
 
     window.addEventListener('resize', () => {
         const w = getChartWidth();

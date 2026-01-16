@@ -141,13 +141,77 @@
         <div class="content">
             <div class="content-inner">
                 <div class="control-group">
-                    <label>DDC Frequency (MHz)</label>
+                    <label>DDC 0 Frequency (MHz)</label>
                     <div style="display: flex; gap: 5px;">
-                        <input type="number" id="ddcFreqInput" value="0" step="1" 
-                               onkeypress="if(event.key === 'Enter') updateDDCFrequency()">
-                        <button onclick="updateDDCFrequency()" class="btn-success" style="width: auto;">Set</button>
+                        <input type="number" id="ddc0FreqInput" value="0" step="1"
+                               onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(0)">
+                        <button onclick="updateHWDDCFrequency(0)" class="btn-success" style="width: auto;">Set</button>
                     </div>
-                    <span id="ddcStatus" style="font-size: 11px;"></span>
+                    <div style="margin-top: 5px;">
+                        <label style="font-weight: normal; font-size: 12px;">
+                            <input type="checkbox" id="ddc0Enable" onchange="updateHWDDCEnable(0)"> Enable DDC 0
+                        </label>
+                    </div>
+                    <span id="ddc0Status" style="font-size: 11px;"></span>
+                </div>
+
+                <div class="control-group">
+                    <label>DDC 1 Frequency (MHz)</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="ddc1FreqInput" value="0" step="1"
+                               onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(1)">
+                        <button onclick="updateHWDDCFrequency(1)" class="btn-success" style="width: auto;">Set</button>
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <label style="font-weight: normal; font-size: 12px;">
+                            <input type="checkbox" id="ddc1Enable" onchange="updateHWDDCEnable(1)"> Enable DDC 1
+                        </label>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>DDC 2 Frequency (MHz)</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="ddc2FreqInput" value="0" step="1"
+                               onkeypress="if(event.key === 'Enter') updateHWDDCFrequency(2)">
+                        <button onclick="updateHWDDCFrequency(2)" class="btn-success" style="width: auto;">Set</button>
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <label style="font-weight: normal; font-size: 12px;">
+                            <input type="checkbox" id="ddc2Enable" onchange="updateHWDDCEnable(2)"> Enable DDC 2
+                        </label>
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="control-group">
+                    <label>Filter Selection</label>
+                    <select id="filterSelect" onchange="updateHWFilter()">
+                        <option value="500mhz" selected>500 MHz LP</option>
+                        <option value="1ghz">1 GHz LP</option>
+                        <option value="2ghz">2 GHz LP</option>
+                        <option value="bypass">Bypass</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Attenuation: <span id="attenVal" style="color: #00ff00;">0</span> dB</label>
+                    <input type="range" id="attenuationSlider" min="0" max="31" value="0"
+                        oninput="document.getElementById('attenVal').innerText = this.value"
+                        onchange="updateHWAttenuation()">
+                </div>
+
+                <hr>
+
+                <div class="control-group">
+                    <label style="font-weight: normal; font-size: 12px;">
+                        <input type="checkbox" id="calibrationMode" onchange="updateHWCalibration()"> Calibration Mode
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <button id="systemEnableBtn" onclick="toggleHWSystem()" class="btn-success">System: ON</button>
                 </div>
             </div>
         </div>
