@@ -56,6 +56,10 @@ func main() {
 	var size sizeFlag = 100 * 1024 * 1024 // Default 100MB
 	flag.Var(&size, "s", "Capture size (e.g., 100MB, 1GB, 4096B)")
 
+	// New flags for duration
+	samples := flag.Int64("n", 0, "Number of samples to capture (overrides -s)")
+	duration := flag.Duration("t", 0, "Duration to capture (e.g., 10s, 500ms) (overrides -n and -s)")
+
 	// CLI-specific flags
 	outputFile := flag.String("o", "capture.bin", "Output filename (CLI mode only)")
 	configFile := flag.String("c", "", "Hardware configuration JSON file (CLI mode only)")
@@ -104,6 +108,19 @@ func main() {
 	}
 
 	targetSize := int(size)
+
+	// Calculate target size based on precedence
+	const bytesPerSample = 32
+	const sampleRate = 250000000
+
+	if *duration > 0 {
+		totalSamples := int64((*duration).Seconds() * float64(sampleRate))
+		targetSize = int(totalSamples * bytesPerSample)
+		fmt.Printf("Duration %v -> %d samples -> %d bytes\n", *duration, totalSamples, targetSize)
+	} else if *samples > 0 {
+		targetSize = int(*samples * bytesPerSample)
+		fmt.Printf("Samples %d -> %d bytes\n", *samples, targetSize)
+	}
 
 	if *isServer {
 		runServer(*port, *device, targetSize)

@@ -25,15 +25,22 @@
     .app-container { display: flex; width: 100%; height: calc(100vh - 50px); }
     
     .sidebar { 
-        width: 340px; 
+        width: 380px; 
         background: #2d2d2d; 
         padding: 0; 
-        overflow-y: auto; 
         flex-shrink: 0; 
         border-right: 1px solid #444; 
         box-sizing: border-box;
         display: flex;
         flex-direction: column;
+    }
+
+    .sidebar-scrollable {
+        flex: 1;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+        /* Balance the gutter on the right with padding on the left */
+        padding-left: 16px; 
     }
 
     .main-content { 
@@ -244,5 +251,26 @@
     .btn-start:hover { background: #4dd85f; }
     .btn-stop { background: #e6194b; color: white; }
     .btn-stop:hover { background: #ff4d4d; }
+
+    /* Custom Scrollbar Styling */
+    ::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #1a1a1a;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #444;
+        border-radius: 6px;
+        border: 3px solid #1a1a1a;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #666;
+    }
+    /* Hide scrollbar arrows */
+    ::-webkit-scrollbar-button {
+        display: none;
+    }
 </style>
 {{ end }}

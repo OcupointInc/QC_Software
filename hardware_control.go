@@ -88,16 +88,16 @@ type Parameter struct {
 }
 
 type HardwareConfig struct {
-	DDC0FreqMHz *int    `json:"ddc0_freq_mhz"`
-	DDC1FreqMHz *int    `json:"ddc1_freq_mhz"`
-	DDC2FreqMHz *int    `json:"ddc2_freq_mhz"`
-	DDC0Enable  *bool   `json:"ddc0_enable"`
-	DDC1Enable  *bool   `json:"ddc1_enable"`
-	DDC2Enable  *bool   `json:"ddc2_enable"`
-	Attenuation *int    `json:"attenuation_db"`
-	Filter      *string `json:"filter"`
-	Calibration *bool   `json:"calibration_mode"`
-	SystemEnable *bool  `json:"system_enable"`
+	DDC0FreqMHz *int    `json:"ddc0_freq_mhz,omitempty"`
+	DDC1FreqMHz *int    `json:"ddc1_freq_mhz,omitempty"`
+	DDC2FreqMHz *int    `json:"ddc2_freq_mhz,omitempty"`
+	DDC0Enable  *bool   `json:"ddc0_enable,omitempty"`
+	DDC1Enable  *bool   `json:"ddc1_enable,omitempty"`
+	DDC2Enable  *bool   `json:"ddc2_enable,omitempty"`
+	Attenuation *int    `json:"attenuation_db,omitempty"`
+	Filter      *string `json:"filter,omitempty"`
+	Calibration *bool   `json:"calibration_mode,omitempty"`
+	SystemEnable *bool  `json:"system_enable,omitempty"`
 }
 
 // HardwareController manages FPGA parameter control via PCIe
@@ -492,17 +492,11 @@ func (hc *HardwareController) GetConfig() *HardwareConfig {
 	intPtr := func(i int) *int { return &i }
 	boolPtr := func(b bool) *bool { return &b }
 
-	// Construct config from params
+	// Construct config from params - Only including requested/implemented fields
 	cfg := &HardwareConfig{
 		DDC0FreqMHz: intPtr(getVal(DDC0_FMIX)),
-		DDC1FreqMHz: intPtr(getVal(DDC1_FMIX)),
-		DDC2FreqMHz: intPtr(getVal(DDC2_FMIX)),
-		DDC0Enable:  boolPtr(getVal(DDC0_EN) == 1),
-		DDC1Enable:  boolPtr(getVal(DDC1_EN) == 1),
-		DDC2Enable:  boolPtr(getVal(DDC2_EN) == 1),
 		Attenuation: intPtr(getVal(ATTENUATION_BVAL)),
 		Calibration: boolPtr(getVal(CAL_EN) == 1),
-		SystemEnable: boolPtr(getVal(SYSTEM_EN) == 1),
 	}
 
 	// Determine active filter

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,31 @@ import (
 
 type RecordStartRequest struct {
 	Samples int             `json:"samples"`
+	Mode    string          `json:"mode"`  // "samples", "time", "size"
+	Value   string          `json:"value"` // Input string
 	Config  *HardwareConfig `json:"config"`
+}
+
+func parseSize(value string) (int, error) {
+	value = strings.TrimSpace(strings.ToUpper(value))
+	multiplier := 1
+	if strings.HasSuffix(value, "GB") {
+		multiplier = 1024 * 1024 * 1024
+		value = strings.TrimSuffix(value, "GB")
+	} else if strings.HasSuffix(value, "MB") {
+		multiplier = 1024 * 1024
+		value = strings.TrimSuffix(value, "MB")
+	} else if strings.HasSuffix(value, "KB") {
+		multiplier = 1024
+		value = strings.TrimSuffix(value, "KB")
+	} else if strings.HasSuffix(value, "B") {
+		value = strings.TrimSuffix(value, "B")
+	}
+	val, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	return val * multiplier, nil
 }
 
 func handleRecordStart(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +53,33 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", 400)
 		return
+	}
+
+	// Calculate samples based on Mode
+	const sampleRate = 250000000
+	const bytesPerSample = 32
+
+	if req.Mode != "" && req.Value != "" {
+		switch req.Mode {
+		case "samples":
+			if s, err := strconv.Atoi(req.Value); err == nil {
+				req.Samples = s
+			}
+		case "time":
+			// Try time.ParseDuration (handles 10s, 500ms)
+			// If it's just a number, assume seconds
+			val := req.Value
+			if _, err := strconv.ParseFloat(val, 64); err == nil {
+				val += "s"
+			}
+			if d, err := time.ParseDuration(val); err == nil {
+				req.Samples = int(d.Seconds() * float64(sampleRate))
+			}
+		case "size":
+			if bytes, err := parseSize(req.Value); err == nil {
+				req.Samples = bytes / bytesPerSample
+			}
+		}
 	}
 
 	if req.Samples <= 0 {

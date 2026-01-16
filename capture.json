@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-16T09:29:36-05:00",
+  "sample_rate": 250000000,
+  "config": {
+    "ddc0_freq_mhz": 150,
+    "attenuation_db": 0,
+    "filter": "bypass",
+    "calibration_mode": false
+  }
+}

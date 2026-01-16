@@ -1455,6 +1455,14 @@
     // --- Recording Logic ---
     let isRecording = false;
 
+    function updateRecordPlaceholder() {
+        const mode = document.getElementById('recordMode').value;
+        const input = document.getElementById('recordValue');
+        if (mode === 'samples') input.placeholder = 'Count (e.g. 100000)';
+        else if (mode === 'time') input.placeholder = 'Duration (e.g. 10s)';
+        else if (mode === 'size') input.placeholder = 'Size (e.g. 1GB)';
+    }
+
     async function toggleRecording() {
         if (isRecording) {
             // Stop
@@ -1465,9 +1473,11 @@
             }
         } else {
             // Start
-            const samples = parseInt(document.getElementById('recordSamples').value);
-            if (isNaN(samples) || samples <= 0) {
-                alert("Invalid sample count");
+            const mode = document.getElementById('recordMode').value;
+            const valStr = document.getElementById('recordValue').value;
+            
+            if (!valStr) {
+                alert("Please enter a value");
                 return;
             }
 
@@ -1475,7 +1485,11 @@
                 const res = await fetch('/api/record/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ samples: samples })
+                    body: JSON.stringify({ 
+                        mode: mode, 
+                        value: valStr,
+                        samples: 0 // Server will calculate
+                    })
                 });
                 const data = await res.json();
                 if (!res.ok) {
