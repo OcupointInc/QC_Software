@@ -6,12 +6,16 @@
 </head>
 <body>
 
+<nav class="navbar">
+    <div class="navbar-brand">Ocupoint</div>
+</nav>
+
 <div class="app-container">
     {{ template "sidebar.html" . }}
     {{ template "charts.html" . }}
 </div>
 
-{{ template "scripts.html" . }}
+{{ template "scripts.html" }}
 
 </body>
 </html>
