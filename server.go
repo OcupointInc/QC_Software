@@ -191,7 +191,31 @@ func runServer(port int, devicePath string, targetSize int) {
 
 				// Handle specific control messages
 				if config.Type == "stream_control" && config.Enabled != nil {
+					wasEnabled := serverState.StreamingEnabled
 					serverState.StreamingEnabled = *config.Enabled
+
+					// When stream is first started, initialize DDC0 to 125 MHz
+					if *config.Enabled && !wasEnabled {
+						serverState.mu.Unlock() // Unlock before hardware call
+						initFreqMHz := 125.0
+						if hwController != nil {
+							if err := hwController.UpdateParameter(DDC0_FMIX, int(initFreqMHz)); err != nil {
+								log.Printf("Failed to initialize DDC0 frequency: %v", err)
+							} else {
+								log.Printf("Initialized DDC0 to %.0f MHz on stream start", initFreqMHz)
+								serverState.mu.Lock()
+								serverState.DDCFreqMHz = initFreqMHz
+								serverState.mu.Unlock()
+								// Broadcast frequency update to clients
+								go broadcastJSON(map[string]interface{}{
+									"type":      "ddc_freq_update",
+									"ddc_index": 0,
+									"freq_mhz":  initFreqMHz,
+								})
+							}
+						}
+						serverState.mu.Lock() // Re-lock for remaining config updates
+					}
 				}
 
 				// Handle standard config updates

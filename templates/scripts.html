@@ -8,13 +8,21 @@
 
     for (i = 0; i < coll.length; i++) {
         coll[i].addEventListener("click", function() {
-            this.classList.toggle("active");
-            var content = this.nextElementSibling;
-            if (content.style.maxHeight) {
+            var clickedContent = this.nextElementSibling;
+            var isCurrentlyOpen = this.classList.contains("active");
+
+            // Close all collapsibles first
+            for (var j = 0; j < coll.length; j++) {
+                coll[j].classList.remove("active");
+                var content = coll[j].nextElementSibling;
                 content.style.maxHeight = null;
-            } else {
-                content.style.maxHeight = content.scrollHeight + "px";
-            } 
+            }
+
+            // If the clicked one wasn't open, open it
+            if (!isCurrentlyOpen) {
+                this.classList.add("active");
+                clickedContent.style.maxHeight = clickedContent.scrollHeight + "px";
+            }
         });
     }
 
@@ -237,8 +245,8 @@
         if (!uplotFFT) return;
         const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
         const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
-        const defaultYMin = -140;
-        const defaultYMax = 10;
+        const defaultYMin = -100;
+        const defaultYMax = 5;
         document.getElementById('fftXMin').value = minFreq;
         document.getElementById('fftXMax').value = maxFreq;
         document.getElementById('fftYMin').value = defaultYMin;
@@ -358,7 +366,7 @@
                         range: (u, min, max) => timeScaleX ? [timeScaleX.min, timeScaleX.max] : [0, SAMPLE_SIZE]
                     },
                     y: {
-                        range: (u, min, max) => timeScaleY ? [timeScaleY.min, timeScaleY.max] : [-2100, 2100]
+                        range: (u, min, max) => timeScaleY ? [timeScaleY.min, timeScaleY.max] : [-12000, 12000]
                     }
                 },
                 axes: [
@@ -434,11 +442,11 @@
                         range: (u, min, max) => fftScaleX ? [fftScaleX.min, fftScaleX.max] : [minFreq, maxFreq]
                     },
                     y: {
-                        range: (u, min, max) => fftScaleY ? [fftScaleY.min, fftScaleY.max] : [-140, 10]
+                        range: (u, min, max) => fftScaleY ? [fftScaleY.min, fftScaleY.max] : [-100, 5]
                     }
                 },
                 axes: [
-                    { label: "Frequency (MHz)", stroke: "#ccc", values: (self, splits) => splits.map(v => v.toFixed(3)), grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } },
+                    { label: "Frequency (MHz)", stroke: "#ccc", values: (self, splits) => splits.map(v => v.toFixed(1)), grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } },
                     { label: "Power (dBm)", stroke: "#ccc", space: 40, grid: { show: true, stroke: "#444", width: 1, dash: [5, 5] } }
                 ],
                 series: seriesFFT,
@@ -525,8 +533,8 @@
         calculateDBm(real, imag) {
             const out = new Float64Array(this.size);
             const half = this.size / 2;
-            const fullScaleAmp = 2048.0;
-            const fullScaleDBm = 3.9;
+            const fullScaleAmp = 32768.0;  // 16-bit ADC: 2^15
+            const fullScaleDBm = 3.9;      // Full scale input power
             const ref = fullScaleAmp * this.windowSum;
             
             for(let i=0; i<this.size; i++) {
@@ -1139,18 +1147,29 @@
         }
     }
 
-    // Update FFT X-axis frequency labels without regenerating chart
+    // Update FFT X-axis frequency labels and regenerate X-axis data
     function updateFFTFrequencyAxis(centerFreqMHz) {
         CENTER_FREQ_MHZ = centerFreqMHz;
         FREQ_RES_MHZ = IBW_MHZ / FFT_SIZE;
 
-        // Only update the FFT X-axis scale input fields
+        // Update the FFT X-axis scale input fields
         const minFreq = CENTER_FREQ_MHZ - (IBW_MHZ / 2);
         const maxFreq = CENTER_FREQ_MHZ + (IBW_MHZ / 2);
         document.getElementById('fftXMin').value = minFreq;
         document.getElementById('fftXMax').value = maxFreq;
 
-        // Don't touch the plot - let the user click "Apply" if they want to update the view
+        // Regenerate X-axis data array for the FFT chart
+        if (uplotFFT && dataFFT && dataFFT.length > 0) {
+            const xFFT = Array.from({length: FFT_SIZE}, (_, i) => {
+                const bin = i - FFT_SIZE / 2;
+                return CENTER_FREQ_MHZ + (bin * FREQ_RES_MHZ);
+            });
+            dataFFT[0] = xFFT;
+
+            // Update the chart scales to match new frequency range
+            fftScaleX = { min: minFreq, max: maxFreq };
+            uplotFFT.setScale('x', fftScaleX);
+        }
     }
 
     async function updateHWDDCEnable(ddcIndex) {
@@ -1671,6 +1690,16 @@
                     
                     if (msg.type === "ddc_update") {
                         document.getElementById('ddcFreqInput').value = msg.freq_mhz;
+                    } else if (msg.type === "ddc_freq_update") {
+                        // Handle DDC frequency update from hardware (e.g., on stream start)
+                        if (msg.ddc_index === 0) {
+                            document.getElementById('ddc0FreqInput').value = msg.freq_mhz;
+                            updateFFTFrequencyAxis(msg.freq_mhz);
+                        } else if (msg.ddc_index === 1) {
+                            document.getElementById('ddc1FreqInput').value = msg.freq_mhz;
+                        } else if (msg.ddc_index === 2) {
+                            document.getElementById('ddc2FreqInput').value = msg.freq_mhz;
+                        }
                     } else if (msg.type === "siggen_freq_update") {
                         document.getElementById('sigGenFreqInput').value = msg.freq_mhz;
                     } else if (msg.type === "siggen_power_update") {
