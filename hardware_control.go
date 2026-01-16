@@ -98,6 +98,7 @@ type HardwareConfig struct {
 	Filter      *string `json:"filter,omitempty"`
 	Calibration *bool   `json:"calibration_mode,omitempty"`
 	SystemEnable *bool  `json:"system_enable,omitempty"`
+	Channels    []int   `json:"channels,omitempty"`
 }
 
 // HardwareController manages FPGA parameter control via PCIe

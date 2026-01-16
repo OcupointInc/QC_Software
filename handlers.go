@@ -393,13 +393,30 @@ func handleReplaySelect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Try to load metadata to get channels
+	metaFilename := strings.TrimSuffix(safeFilename, ".bin") + ".json"
+	metaPath := filepath.Join(dataFolder, metaFilename)
+	var replayChannels []int
+
+	if metaBytes, err := os.ReadFile(metaPath); err == nil {
+		var meta CaptureMetadata
+		if err := json.Unmarshal(metaBytes, &meta); err == nil {
+			// Convert from 1-8 (metadata) to 0-7 (internal)
+			replayChannels = make([]int, len(meta.Channels))
+			for i, ch := range meta.Channels {
+				replayChannels[i] = ch - 1
+			}
+		}
+	}
+
 	serverState.mu.Lock()
 	serverState.ReplayData = data
 	serverState.ReplayName = req.Filename
 	serverState.ReplayOffset = 0
+	serverState.ReplayChannels = replayChannels
 	serverState.mu.Unlock()
 
-	log.Printf("[REPLAY] Selected %s (%d bytes)", req.Filename, len(data))
+	log.Printf("[REPLAY] Selected %s (%d bytes). Channels: %v", req.Filename, len(data), replayChannels)
 
 	broadcastJSON(map[string]interface{}{
 		"type":        "replay_update",

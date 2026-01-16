@@ -35,26 +35,28 @@ type ServerState struct {
 	ReplayData        []byte
 	ReplayName        string
 	ReplayOffset      int
+	ReplayChannels    []int // Channel indices present in the replay file (0-7)
 	ForceReplayUpdate bool
 
 	// Recording
-	Recording          bool
-	RecordingFile      string
+		Recording          bool
+		RecordingFile      string
 		RecordingSamples   int // Total samples to record
 		RecordingCurrent   int // Samples recorded so far
+		RecordingChannels  []int // Channel indices active during this recording (0-7)
 		RecordingFileHandle *os.File
-	
+
 		// System
-			DevicePath string
-		}
-		
-		// CaptureMetadata represents the metadata saved alongside a capture
-		type CaptureMetadata struct {
-			Timestamp   string          `json:"timestamp"`
-			SampleRate  int             `json:"sample_rate"` // Always 244400000
-			Config      *HardwareConfig `json:"config"`
-		}
-		
+		DevicePath string
+	}
+
+	// CaptureMetadata represents the metadata saved alongside a capture
+	type CaptureMetadata struct {
+		Timestamp   string          `json:"timestamp"`
+		SampleRate  int             `json:"sample_rate"` // Always 244400000
+		Channels    []int           `json:"channels"`    // Active channel indices in this capture (0-7)
+		Config      *HardwareConfig `json:"config"`
+	}		
 		type SweepParams struct {
 			StartMHz float64 `json:"start_mhz"`
 	StopMHz  float64 `json:"stop_mhz"`

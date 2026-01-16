@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,8 +13,23 @@ import (
 )
 
 // runCLI executes the one-shot capture and file save
-func runCLI(devicePath string, targetSize int, outputFilename string, configFile string) {
+func runCLI(devicePath string, targetSize int, outputFilename string, configFile string, channels string) {
 	fmt.Println("--- DMA Capture Session Start ---")
+
+	// Parse channels
+	activeChannelIndices := []int{}
+	activeMask := [8]bool{}
+	parts := strings.Split(channels, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if chIdx, err := strconv.Atoi(p); err == nil && chIdx >= 1 && chIdx <= 8 {
+			activeChannelIndices = append(activeChannelIndices, chIdx-1)
+			activeMask[chIdx-1] = true
+		}
+	}
+	if len(activeChannelIndices) == 0 {
+		log.Fatal("Error: No valid channels selected")
+	}
 
 	// Apply hardware configuration if provided
 	if configFile != "" {
@@ -40,12 +56,13 @@ func runCLI(devicePath string, targetSize int, outputFilename string, configFile
 		}
 	}
 
-	fmt.Printf("Device: %s | Target: %d bytes\n", devicePath, targetSize)
+	fmt.Printf("Device: %s | Target: %d bytes | Channels: %v\n", devicePath, targetSize, activeChannelIndices)
 	fmt.Println(">>> CAPTURING...")
 
 	cfg := dma.CaptureConfig{
-		DevicePath: devicePath,
-		TargetSize: targetSize,
+		DevicePath:  devicePath,
+		TargetSize:  targetSize,
+		ChannelMask: activeMask,
 	}
 
 	result, err := dma.RunCapture(cfg)
@@ -53,11 +70,9 @@ func runCLI(devicePath string, targetSize int, outputFilename string, configFile
 		log.Fatalf("Capture failed: %v", err)
 	}
 
+	// Aligned flag is false for filtered captures in dma.RunCapture
 	if result.Aligned {
-		// fmt.Printf(">>> Aligning data: Shifting Ch0-7 up.\n")
-		// fmt.Printf("    Original Bytes: %d, New Bytes: %d\n", result.BytesRead, len(result.Data))
-	} else {
-		log.Printf("Warning: Alignment not needed or insufficient data. Captured %d bytes", result.BytesRead)
+		// ...
 	}
 
 	fmt.Println("--- Results ---")
@@ -86,27 +101,21 @@ func runCLI(devicePath string, targetSize int, outputFilename string, configFile
 			metaFilename += ".json"
 		}
 		
-		// If hwController is active (initialized), get config. Otherwise empty/nil?
-		// runCLI initializes it ONLY if configFile is present.
-		// If configFile is NOT present, hwController might be nil or default.
-		// We should ensure it's initialized if we want to save state, OR we accept it might be nil.
-		// If user didn't pass -c, we might not have touched hardware in this process?
-		// Actually, if we are in CLI mode and didn't pass -c, we might rely on previous state or defaults.
-		// But initHardwareController creates the global 'hwController'.
-		// If config file wasn't passed, 'initHardwareController' wasn't called in the code above!
-		// Check the code above: "if configFile != "" { ... initHardwareController ... }"
-		// So if no config file, we can't get hardware state unless we init it.
-		// For correctness, we should probably init it anyway to read state?
-		// Or just skip config if not initialized.
-		
 		var currentConfig *HardwareConfig
 		if hwController != nil {
 			currentConfig = hwController.GetConfig()
 		}
 
+		// Convert internal 0-7 indices to user-facing 1-8 for metadata
+		outputChannels := make([]int, len(activeChannelIndices))
+		for i, ch := range activeChannelIndices {
+			outputChannels[i] = ch + 1
+		}
+
 		metadata := CaptureMetadata{
 			Timestamp:  time.Now().Format(time.RFC3339),
 			SampleRate: 244400000,
+			Channels:   outputChannels,
 			Config:     currentConfig,
 		}
 

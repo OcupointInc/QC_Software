@@ -126,25 +126,40 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If RecordingChannels is not set from config, default to all channels
+	if len(serverState.RecordingChannels) == 0 {
+		serverState.RecordingChannels = []int{0, 1, 2, 3, 4, 5, 6, 7}
+	}
+
 	serverState.Recording = true
 	serverState.RecordingFile = filename
 	serverState.RecordingSamples = req.Samples
 	serverState.RecordingCurrent = 0
 	serverState.RecordingFileHandle = f
+	// RecordingChannels should already be set from config.json at startup
 	serverState.mu.Unlock()
 
 	// Save Metadata
 	metaFilename := strings.TrimSuffix(filename, ".bin") + ".json"
 	metaPath := filepath.Join(dataDir, metaFilename)
-	
+
 	var currentConfig *HardwareConfig
 	if hwController != nil {
 		currentConfig = hwController.GetConfig()
 	}
 
+	serverState.mu.RLock()
+	// Convert internal 0-7 indices to user-facing 1-8
+	activeChannels := make([]int, len(serverState.RecordingChannels))
+	for i, ch := range serverState.RecordingChannels {
+		activeChannels[i] = ch + 1
+	}
+	serverState.mu.RUnlock()
+
 	metadata := CaptureMetadata{
 		Timestamp:  time.Now().Format(time.RFC3339),
-		SampleRate: 244500000,
+		SampleRate: 244400000,
+		Channels:   activeChannels,
 		Config:     currentConfig,
 	}
 	

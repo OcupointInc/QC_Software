@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -20,8 +21,10 @@ var (
 )
 
 type Client struct {
-	conn *websocket.Conn
-	send chan interface{}
+	conn     *websocket.Conn
+	send     chan interface{}
+	channels []string
+	mu       sync.Mutex
 }
 
 // writePump pumps messages from the hub to the websocket connection.
@@ -55,6 +58,33 @@ func runServer(port int, devicePath string, targetSize int) {
 	// Initialize hardware controller
 	commandDevice := "/dev/xdma0_user"
 	initHardwareController(commandDevice)
+
+	// Load config.json for default recording channels if it exists
+	if configData, err := os.ReadFile("config.json"); err == nil {
+		var config HardwareConfig
+		if err := json.Unmarshal(configData, &config); err == nil {
+			// Apply hardware configuration
+			if hwController != nil {
+				if err := hwController.ApplyConfig(&config); err != nil {
+					log.Printf("Warning: Error applying config: %v", err)
+				}
+				log.Println("Loaded and applied config.json")
+			}
+
+			// Store recording channels from config (config uses 1-8, internal uses 0-7)
+			if len(config.Channels) > 0 {
+				serverState.mu.Lock()
+				serverState.RecordingChannels = make([]int, 0, len(config.Channels))
+				for _, ch := range config.Channels {
+					if ch >= 1 && ch <= 8 {
+						serverState.RecordingChannels = append(serverState.RecordingChannels, ch-1)
+					}
+				}
+				serverState.mu.Unlock()
+				log.Printf("Recording channels set from config: %v (1-indexed)", config.Channels)
+			}
+		}
+	}
 
 	serverState.mu.Lock()
 	serverState.DevicePath = devicePath
@@ -141,6 +171,15 @@ func runServer(port int, devicePath string, targetSize int) {
 
 	// WebSocket streaming endpoint
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		serverState.mu.RLock()
+		isRecording := serverState.Recording
+		serverState.mu.RUnlock()
+
+		if isRecording {
+			http.Error(w, "System is recording", http.StatusServiceUnavailable)
+			return
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Println("Upgrade:", err)
@@ -192,6 +231,13 @@ func runServer(port int, devicePath string, targetSize int) {
 				Enabled *bool  `json:"enabled"`
 			}
 			if err := json.Unmarshal(msg, &config); err == nil {
+				// Update Client's requested channels
+				if len(config.Channels) > 0 {
+					client.mu.Lock()
+					client.channels = config.Channels
+					client.mu.Unlock()
+				}
+
 				serverState.mu.Lock()
 
 				// Handle specific control messages
@@ -225,9 +271,6 @@ func runServer(port int, devicePath string, targetSize int) {
 				}
 
 				// Handle standard config updates
-				if len(config.Channels) > 0 {
-					serverState.Channels = config.Channels
-				}
 				if config.Mode != "" {
 					serverState.StreamMode = config.Mode
 				}

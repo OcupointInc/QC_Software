@@ -25,6 +25,8 @@ func runGlobalStreamLoop(devicePath string) {
 	const sampleSize = 1024  // samples for time domain display
 
 	frameCounter := 0
+	
+	var buf []byte
 
 	for {
 		// Check if we should exit (no clients)
@@ -39,7 +41,6 @@ func runGlobalStreamLoop(devicePath string) {
 		fps := serverState.StreamFPS
 		fftSize := serverState.FFTSize
 		mode := serverState.StreamMode
-		channels := serverState.Channels
 		replayMode := serverState.ReplayMode
 		replayData := serverState.ReplayData
 		//streamingEnabled := serverState.StreamingEnabled
@@ -69,43 +70,6 @@ func runGlobalStreamLoop(devicePath string) {
 		if samplesNeeded < sampleSize {
 			samplesNeeded = sampleSize
 		}
-		bytesNeeded := samplesNeeded * numChannels * bytesPerSample
-
-		buf := make([]byte, bytesNeeded)
-
-		// Replay Logic
-		if (replayMode || forceReplayUpdate) && len(replayData) > 0 {
-			serverState.mu.Lock()
-			// Reset force flag if it was set
-			if serverState.ForceReplayUpdate {
-				serverState.ForceReplayUpdate = false
-			}
-			offset := serverState.ReplayOffset
-
-			// Send progress update occasionally
-			frameCounter++
-			if frameCounter%10 == 0 {
-				totalSize := len(replayData)
-				progress := float64(offset) / float64(totalSize)
-				go broadcastJSON(map[string]interface{}{
-					"type":     "replay_progress",
-					"progress": progress,
-					"offset":   offset,
-					"total":    totalSize,
-				})
-			}
-
-			for i := 0; i < bytesNeeded; i++ {
-				buf[i] = replayData[offset]
-				offset = (offset + 1) % len(replayData)
-			}
-			serverState.ReplayOffset = offset
-			serverState.mu.Unlock()
-		} else {
-			// Should not happen due to check above
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
 
 		// Parse into channel data
 		// Data format: for each sample, 8 channels * (I16 + Q16) = 32 bytes
@@ -116,30 +80,99 @@ func runGlobalStreamLoop(devicePath string) {
 			channelQ[ch] = make([]int16, samplesNeeded)
 		}
 
-		for s := 0; s < samplesNeeded; s++ {
-			baseOffset := s * numChannels * bytesPerSample
-			for ch := 0; ch < numChannels; ch++ {
-				offset := baseOffset + ch*bytesPerSample
-				if offset+4 <= len(buf) {
-					channelI[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset:]))
-					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset+2:]))
+		// Replay Logic
+		if (replayMode || forceReplayUpdate) && len(replayData) > 0 {
+			serverState.mu.Lock()
+			// Reset force flag if it was set
+			if serverState.ForceReplayUpdate {
+				serverState.ForceReplayUpdate = false
+			}
+			offset := serverState.ReplayOffset
+			replayChList := serverState.ReplayChannels
+			totalSize := len(replayData)
+			
+			// Determine replay layout
+			replayBlockSize := 32 // Default 8 channels
+			replayMap := make(map[int]int) // ChIdx -> Offset within block (0, 4, 8...)
+
+			if len(replayChList) > 0 {
+				replayBlockSize = len(replayChList) * bytesPerSample
+				currentOff := 0
+				for _, chIdx := range replayChList {
+					if chIdx >= 0 && chIdx < numChannels {
+						replayMap[chIdx] = currentOff
+					}
+					currentOff += bytesPerSample
+				}
+			} else {
+				// Legacy/Full: 1:1 mapping
+				for i := 0; i < numChannels; i++ {
+					replayMap[i] = i * bytesPerSample
 				}
 			}
+
+			// Send progress update occasionally
+			frameCounter++
+			if frameCounter%10 == 0 {
+				progress := float64(offset) / float64(totalSize)
+				go broadcastJSON(map[string]interface{}{
+					"type":     "replay_progress",
+					"progress": progress,
+					"offset":   offset,
+					"total":    totalSize,
+				})
+			}
+
+			// Read and Parse loop
+			for s := 0; s < samplesNeeded; s++ {
+				// Check boundary
+				if offset + replayBlockSize > totalSize {
+					offset = 0 // Loop around
+				}
+				
+				// Read block
+				block := replayData[offset : offset+replayBlockSize]
+				offset += replayBlockSize
+				
+				// Parse mapped channels
+				for ch := 0; ch < numChannels; ch++ {
+					if off, ok := replayMap[ch]; ok {
+						channelI[ch][s] = int16(binary.LittleEndian.Uint16(block[off:]))
+						channelQ[ch][s] = int16(binary.LittleEndian.Uint16(block[off+2:]))
+					} else {
+						// Channel not in recording: Fill 0
+						channelI[ch][s] = 0
+						channelQ[ch][s] = 0
+					}
+				}
+			}
+			serverState.ReplayOffset = offset
+			serverState.mu.Unlock()
+		} else {
+			// Should not happen due to check above
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 		// Build output binary message
 		var outBuf []byte
 
-		// Determine active channels
+		// Determine active channels (Union of all clients' requests)
 		activeChannels := make(map[int]bool)
-		for _, chName := range channels {
-			if len(chName) >= 2 {
-				chIdx := int(chName[1] - '1')
-				if chIdx >= 0 && chIdx < numChannels {
-					activeChannels[chIdx] = true
+		wsClientsMu.RLock()
+		for client := range wsClients {
+			client.mu.Lock()
+			for _, chName := range client.channels {
+				if len(chName) >= 2 {
+					chIdx := int(chName[1] - '1')
+					if chIdx >= 0 && chIdx < numChannels {
+						activeChannels[chIdx] = true
+					}
 				}
 			}
+			client.mu.Unlock()
 		}
+		wsClientsMu.RUnlock()
 
 		// Send raw time-domain data (Client will do FFT if needed)
 		// We send whatever we read (samplesNeeded), which is based on FFTSize

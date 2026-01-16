@@ -28,6 +28,9 @@ func runGlobalStreamLoop(devicePath string) {
 	const sampleSize = 1024  // samples for time domain display
 
 	frameCounter := 0
+	
+	// Reusable buffer for device read
+	var buf []byte
 
 	for {
 		// Check if we should exit (no clients)
@@ -45,7 +48,6 @@ func runGlobalStreamLoop(devicePath string) {
 		fps := serverState.StreamFPS
 		fftSize := serverState.FFTSize
 		mode := serverState.StreamMode
-		channels := serverState.Channels
 		replayMode := serverState.ReplayMode
 		replayData := serverState.ReplayData
 		streamingEnabled := serverState.StreamingEnabled
@@ -62,6 +64,7 @@ func runGlobalStreamLoop(devicePath string) {
 		// If Recording is active, we must yield the device!
 		if isRecording {
 			if deviceOpen {
+				log.Println("Yielding device for recording...")
 				unix.Close(fd)
 				deviceOpen = false
 				fd = -1
@@ -80,9 +83,15 @@ func runGlobalStreamLoop(devicePath string) {
 		if samplesNeeded < sampleSize {
 			samplesNeeded = sampleSize
 		}
-		bytesNeeded := samplesNeeded * numChannels * bytesPerSample
 
-		buf := make([]byte, bytesNeeded)
+		// Parse into channel data
+		// Data format: for each sample, 8 channels * (I16 + Q16) = 32 bytes
+		channelI := make([][]int16, numChannels)
+		channelQ := make([][]int16, numChannels)
+		for ch := 0; ch < numChannels; ch++ {
+			channelI[ch] = make([]int16, samplesNeeded)
+			channelQ[ch] = make([]int16, samplesNeeded)
+		}
 
 		if (replayMode || forceReplayUpdate) && len(replayData) > 0 {
 			// Close device if it was open
@@ -92,18 +101,38 @@ func runGlobalStreamLoop(devicePath string) {
 				fd = -1
 			}
 
-			// Read from replay buffer (loop)
 			serverState.mu.Lock()
-			// Reset force flag if it was set
+			// Reset force flag
 			if serverState.ForceReplayUpdate {
 				serverState.ForceReplayUpdate = false
 			}
 			offset := serverState.ReplayOffset
+			replayChList := serverState.ReplayChannels
+			totalSize := len(replayData)
+			
+			// Determine replay layout
+			replayBlockSize := 32 // Default 8 channels
+			replayMap := make(map[int]int) // ChIdx -> Offset within block (0, 4, 8...)
 
-			// Send progress update occasionally
+			if len(replayChList) > 0 {
+				replayBlockSize = len(replayChList) * bytesPerSample
+				currentOff := 0
+				for _, chIdx := range replayChList {
+					if chIdx >= 0 && chIdx < numChannels {
+						replayMap[chIdx] = currentOff
+					}
+					currentOff += bytesPerSample
+				}
+			} else {
+				// Legacy/Full: 1:1 mapping
+				for i := 0; i < numChannels; i++ {
+					replayMap[i] = i * bytesPerSample
+				}
+			}
+
+			// Send progress update
 			frameCounter++
 			if frameCounter%10 == 0 {
-				totalSize := len(replayData)
 				progress := float64(offset) / float64(totalSize)
 				go broadcastJSON(map[string]interface{}{
 					"type":     "replay_progress",
@@ -112,13 +141,33 @@ func runGlobalStreamLoop(devicePath string) {
 					"total":    totalSize,
 				})
 			}
-
-			for i := 0; i < bytesNeeded; i++ {
-				buf[i] = replayData[offset]
-				offset = (offset + 1) % len(replayData)
+			
+			// Read and Parse loop
+			for s := 0; s < samplesNeeded; s++ {
+				// Check boundary
+				if offset + replayBlockSize > totalSize {
+					offset = 0 // Loop around
+				}
+				
+				// Read block
+				block := replayData[offset : offset+replayBlockSize]
+				offset += replayBlockSize
+				
+				// Parse mapped channels
+				for ch := 0; ch < numChannels; ch++ {
+					if off, ok := replayMap[ch]; ok {
+						channelI[ch][s] = int16(binary.LittleEndian.Uint16(block[off:]))
+						channelQ[ch][s] = int16(binary.LittleEndian.Uint16(block[off+2:]))
+					} else {
+						// Channel not in recording: Fill 0
+						channelI[ch][s] = 0
+						channelQ[ch][s] = 0
+					}
+				}
 			}
 			serverState.ReplayOffset = offset
 			serverState.mu.Unlock()
+			
 		} else {
 			// Open device if not already open
 			if !deviceOpen {
@@ -138,6 +187,11 @@ func runGlobalStreamLoop(devicePath string) {
 			}
 
 			// Read data from device
+			bytesNeeded := samplesNeeded * numChannels * bytesPerSample
+			if len(buf) < bytesNeeded {
+				buf = make([]byte, bytesNeeded)
+			}
+			
 			totalRead := 0
 			for totalRead < bytesNeeded {
 				n, err := unix.Read(fd, buf[totalRead:])
@@ -150,7 +204,6 @@ func runGlobalStreamLoop(devicePath string) {
 						unix.Close(fd)
 						deviceOpen = false
 					}
-					// Wait a bit or continue
 					time.Sleep(10 * time.Millisecond)
 					break // Retry outer loop
 				}
@@ -163,22 +216,12 @@ func runGlobalStreamLoop(devicePath string) {
 			if totalRead < bytesNeeded {
 				continue // Incomplete frame
 			}
-		}
-
-		// Parse into channel data
-		// Data format: for each sample, 8 channels * (I16 + Q16) = 32 bytes
-		channelI := make([][]int16, numChannels)
-		channelQ := make([][]int16, numChannels)
-		for ch := 0; ch < numChannels; ch++ {
-			channelI[ch] = make([]int16, samplesNeeded)
-			channelQ[ch] = make([]int16, samplesNeeded)
-		}
-
-		for s := 0; s < samplesNeeded; s++ {
-			baseOffset := s * numChannels * bytesPerSample
-			for ch := 0; ch < numChannels; ch++ {
-				offset := baseOffset + ch*bytesPerSample
-				if offset+4 <= len(buf) {
+			
+			// Parse Device Data (Standard 8-ch interleaved)
+			for s := 0; s < samplesNeeded; s++ {
+				baseOffset := s * numChannels * bytesPerSample
+				for ch := 0; ch < numChannels; ch++ {
+					offset := baseOffset + ch*bytesPerSample
 					channelI[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset:]))
 					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset+2:]))
 				}
@@ -188,16 +231,22 @@ func runGlobalStreamLoop(devicePath string) {
 		// Build output binary message
 		var outBuf []byte
 
-		// Determine active channels
+		// Determine active channels (Union of all clients' requests)
 		activeChannels := make(map[int]bool)
-		for _, chName := range channels {
-			if len(chName) >= 2 {
-				chIdx := int(chName[1] - '1')
-				if chIdx >= 0 && chIdx < numChannels {
-					activeChannels[chIdx] = true
+		wsClientsMu.RLock()
+		for client := range wsClients {
+			client.mu.Lock()
+			for _, chName := range client.channels {
+				if len(chName) >= 2 {
+					chIdx := int(chName[1] - '1')
+					if chIdx >= 0 && chIdx < numChannels {
+						activeChannels[chIdx] = true
+					}
 				}
 			}
+			client.mu.Unlock()
 		}
+		wsClientsMu.RUnlock()
 
 		// Send raw time-domain data (Client will do FFT if needed)
 		// We send whatever we read (samplesNeeded), which is based on FFTSize
