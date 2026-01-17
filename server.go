@@ -243,6 +243,10 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 					client.mu.Lock()
 					client.channels = config.Channels
 					client.mu.Unlock()
+
+					serverState.mu.Lock()
+					serverState.Channels = config.Channels
+					serverState.mu.Unlock()
 				}
 
 				serverState.mu.Lock()

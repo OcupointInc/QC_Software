@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -126,8 +127,30 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If RecordingChannels is not set from config, default to all channels
-	if len(serverState.RecordingChannels) == 0 {
+	// Use currently viewed channels if not explicitly set in the request
+	// (Always override RecordingChannels with GUI selection for consistency)
+	serverState.RecordingChannels = nil
+	
+	// Convert serverState.Channels (e.g. ["I1", "Q1", "I3"]) to indices
+	channelMap := make(map[int]bool)
+	for _, chName := range serverState.Channels {
+		if len(chName) >= 2 {
+			// Parse channel index from name like "I1" or "Q1"
+			// Channels are named I1, Q1, I2, Q2, ..., I8, Q8
+			if idx, err := strconv.Atoi(chName[1:]); err == nil {
+				channelMap[idx-1] = true
+			}
+		}
+	}
+
+	if len(channelMap) > 0 {
+		serverState.RecordingChannels = make([]int, 0, len(channelMap))
+		for chIdx := range channelMap {
+			serverState.RecordingChannels = append(serverState.RecordingChannels, chIdx)
+		}
+		sort.Ints(serverState.RecordingChannels)
+	} else {
+		// Fallback to all channels if nothing selected
 		serverState.RecordingChannels = []int{0, 1, 2, 3, 4, 5, 6, 7}
 	}
 
@@ -136,7 +159,6 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 	serverState.RecordingSamples = req.Samples
 	serverState.RecordingCurrent = 0
 	serverState.RecordingFileHandle = f
-	// RecordingChannels should already be set from config.json at startup
 	serverState.mu.Unlock()
 
 	// Save Metadata
