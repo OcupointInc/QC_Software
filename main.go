@@ -69,9 +69,12 @@ func main() {
 	isServer := flag.Bool("server", false, "Run in WebSocket server mode")
 	port := flag.Int("p", 8080, "Port to listen on (Server mode only)")
 	psuAddr := flag.String("psu", "TCPIP::192.168.1.200::inst0::INSTR", "PSU VISA address (Server mode only)")
+	useSHM := flag.Bool("use-shm", false, "Use shared memory ring buffer for recording/streaming")
+	shmName := flag.String("shm-name", "/xdma_ring", "SHM ring buffer name")
 
 	// Simulation flags
 	isSim := flag.Bool("sim", false, "Simulate XDMA hardware via named pipe")
+	simPath := flag.String("sim-path", "/tmp/xdma_sim", "Path for simulation pipe")
 
 	// PCIe reset flag
 	resetPCIe := flag.Bool("r", false, "Reset PCIe device before starting")
@@ -88,6 +91,13 @@ func main() {
 
 	flag.Parse()
 
+	// Update global state with flags
+	serverState.mu.Lock()
+	serverState.DevicePath = *device
+	serverState.UseSHM = *useSHM
+	serverState.SHMName = *shmName
+	serverState.mu.Unlock()
+
 	// Reset PCIe device if requested
 	if *resetPCIe {
 		log.Println("Resetting PCIe device...")
@@ -103,7 +113,7 @@ func main() {
 
 	// If simulation mode is on, override device path and start the background generator
 	if *isSim {
-		*device = "/tmp/xdma_c2h0"
+		*device = *simPath
 		go RunSimulator(*device)
 		// Give the simulator a moment to initialize the pipe
 		time.Sleep(200 * time.Millisecond)

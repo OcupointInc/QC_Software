@@ -6,10 +6,119 @@ import (
 	"log"
 	"time"
 
+	"github.com/dma/pkg/shm_ring"
 	"golang.org/x/sys/unix"
 )
 
 func performRecording() {
+	serverState.mu.RLock()
+	useSHM := serverState.UseSHM
+	serverState.mu.RUnlock()
+
+	if useSHM {
+		performShmRecording()
+	} else {
+		performXdmRecording()
+	}
+}
+
+func performShmRecording() {
+	serverState.mu.RLock()
+	shmName := serverState.SHMName
+	samplesTotal := serverState.RecordingSamples
+	recChannels := serverState.RecordingChannels
+	serverState.mu.RUnlock()
+
+	log.Printf("Opening SHM ring %s for recording...", shmName)
+	ring, err := shm_ring.Open(shmName)
+	if err != nil {
+		log.Printf("Failed to open SHM ring: %v", err)
+		cleanupRecording(err.Error())
+		return
+	}
+	defer ring.Close()
+
+	const numChannels = 8
+	const bytesPerSample = 4
+	const inputBlockSize = numChannels * bytesPerSample
+
+	totalBytes := samplesTotal * inputBlockSize
+	captureData := make([]byte, 0, totalBytes)
+
+	log.Printf("Capturing %d samples (%d MB) from SHM into RAM...", samplesTotal, totalBytes/(1024*1024))
+
+	samplesRecorded := 0
+	lastBroadcast := 0
+	captureStart := time.Now()
+
+	ringData := ring.Data()
+	ringTotal := ring.Total()
+	
+	// Start reading from the current Head
+	currentPos := ring.GetHead()
+
+	for samplesRecorded < samplesTotal {
+		serverState.mu.RLock()
+		if !serverState.Recording || serverState.RecordingFileHandle == nil {
+			serverState.mu.RUnlock()
+			break
+		}
+		serverState.mu.RUnlock()
+
+		head := ring.GetHead()
+		
+		// Calculate how many bytes are available to read
+		var available uint64
+		if head >= currentPos {
+			available = head - currentPos
+		} else {
+			available = (ringTotal - currentPos) + head
+		}
+
+		if available < inputBlockSize {
+			time.Sleep(1 * time.Millisecond)
+			continue
+		}
+
+		// Don't read more than we need
+		remainingBytes := uint64(totalBytes - len(captureData))
+		if available > remainingBytes {
+			available = remainingBytes
+		}
+
+		// Read in chunks to handle wrap-around
+		toRead := available
+		for toRead > 0 {
+			chunkSize := toRead
+			if currentPos+chunkSize > ringTotal {
+				chunkSize = ringTotal - currentPos
+			}
+
+			captureData = append(captureData, ringData[currentPos:currentPos+chunkSize]...)
+			currentPos = (currentPos + chunkSize) % ringTotal
+			toRead -= chunkSize
+		}
+
+		samplesRecorded = len(captureData) / inputBlockSize
+
+		serverState.mu.Lock()
+		serverState.RecordingCurrent = samplesRecorded
+		serverState.mu.Unlock()
+
+		if samplesRecorded-lastBroadcast > 100000 {
+			go broadcastJSON(map[string]interface{}{
+				"type":    "recording_progress",
+				"current": samplesRecorded,
+				"total":   samplesTotal,
+			})
+			lastBroadcast = samplesRecorded
+		}
+	}
+
+	processAndWrite(captureData, samplesRecorded, recChannels, captureStart)
+}
+
+func performXdmRecording() {
 	// 1. Wait for the global loop to release device
 	// Increased wait time to ensure exclusive access
 	time.Sleep(1 * time.Second)
@@ -53,7 +162,7 @@ func performRecording() {
 	totalBytes := samplesTotal * inputBlockSize
 	captureData := make([]byte, 0, totalBytes)
 
-	log.Printf("Capturing %d samples (%d MB) into RAM...", samplesTotal, totalBytes/(1024*1024))
+	log.Printf("Capturing %d samples (%d MB) from XDMA into RAM...", samplesTotal, totalBytes/(1024*1024))
 
 	samplesRecorded := 0
 	lastBroadcast := 0
@@ -108,6 +217,14 @@ func performRecording() {
 			lastBroadcast = samplesRecorded
 		}
 	}
+
+	processAndWrite(captureData, samplesRecorded, recChannels, captureStart)
+}
+
+func processAndWrite(captureData []byte, samplesRecorded int, recChannels []int, captureStart time.Time) {
+	const numChannels = 8
+	const bytesPerSample = 4
+	const inputBlockSize = numChannels * bytesPerSample
 
 	captureDuration := time.Since(captureStart)
 	log.Printf("Capture complete in %v. Processing and writing to file...", captureDuration)
@@ -204,3 +321,4 @@ func performRecording() {
 	log.Printf("Recording finished. Total samples: %d", samplesRecorded)
 	cleanupRecording("")
 }
+

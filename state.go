@@ -48,6 +48,8 @@ type ServerState struct {
 
 		// System
 		DevicePath string
+		UseSHM     bool
+		SHMName    string
 	}
 
 	// CaptureMetadata represents the metadata saved alongside a capture
