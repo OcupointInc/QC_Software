@@ -54,10 +54,17 @@ func (c *Client) writePump() {
 }
 
 // runServer starts the WebSocket server with embedded HTML
-func runServer(port int, devicePath string, targetSize int) {
+func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	// Initialize hardware controller
 	commandDevice := "/dev/xdma0_user"
 	initHardwareController(commandDevice)
+
+	// Initialize PSU if address provided
+	if psuAddress != "" {
+		if err := InitGlobalPSU(psuAddress); err != nil {
+			log.Printf("Warning: Failed to initialize PSU: %v", err)
+		}
+	}
 
 	// Load config.json for default recording channels if it exists
 	if configData, err := os.ReadFile("config.json"); err == nil {

@@ -243,22 +243,47 @@ func runSweep(params *SweepParams) {
 	}
 }
 
-// PSU stub handlers (simulated)
+// PSU handlers
 func handlePSUState(w http.ResponseWriter, r *http.Request) {
+	psu := GetGlobalPSU()
+	if psu == nil {
+		http.Error(w, "PSU not initialized", 500)
+		return
+	}
+
+	state := psu.GetState()
+	
+	// We currently only support Channel 2 (P25V) as defined in psu_keysight.go
+	// But we'll return an array to match the expected GUI format
 	json.NewEncoder(w).Encode(map[string]interface{}{
+		"connected": state.Connected,
+		"identity":  state.Identity,
 		"outputs": []map[string]interface{}{
 			{
-				"voltage":          5.0,
-				"current_limit":    1.0,
-				"measured_voltage": 5.0,
-				"measured_current": 0.25,
-				"enabled":          true,
+				"id":               1,
+				"name":             "6V",
+				"voltage":          0,
+				"current_limit":    0,
+				"measured_voltage": 0,
+				"measured_current": 0,
+				"enabled":          false,
 			},
 			{
-				"voltage":          12.0,
-				"current_limit":    2.0,
-				"measured_voltage": 12.0,
-				"measured_current": 0.5,
+				"id":               2,
+				"name":             "P25V",
+				"voltage":          state.SetVoltage,
+				"current_limit":    state.SetCurrent,
+				"measured_voltage": state.MeasuredVoltage,
+				"measured_current": state.MeasuredCurrent,
+				"enabled":          state.OutputEnabled,
+			},
+			{
+				"id":               3,
+				"name":             "N25V",
+				"voltage":          0,
+				"current_limit":    0,
+				"measured_voltage": 0,
+				"measured_current": 0,
 				"enabled":          false,
 			},
 		},
@@ -266,14 +291,125 @@ func handlePSUState(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePSUEnable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	psu := GetGlobalPSU()
+	if psu == nil {
+		http.Error(w, "PSU not initialized", 500)
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	// Determine channel from URL path
+	// /api/psu/output/1/enable -> channel 1
+	// /api/psu/output/2/enable -> channel 2
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid path", 400)
+		return
+	}
+	
+	channelID := parts[4]
+	if channelID != "2" {
+		http.Error(w, "Only channel 2 is currently supported", 400)
+		return
+	}
+
+	if err := psu.SetOutput(req.Enabled); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
 func handlePSUVoltage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	psu := GetGlobalPSU()
+	if psu == nil {
+		http.Error(w, "PSU not initialized", 500)
+		return
+	}
+
+	var req struct {
+		Voltage float64 `json:"voltage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid path", 400)
+		return
+	}
+	
+	channelID := parts[4]
+	if channelID != "2" {
+		http.Error(w, "Only channel 2 is currently supported", 400)
+		return
+	}
+
+	if err := psu.SetVoltage(req.Voltage); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
 func handlePSUCurrent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	psu := GetGlobalPSU()
+	if psu == nil {
+		http.Error(w, "PSU not initialized", 500)
+		return
+	}
+
+	var req struct {
+		Current float64 `json:"current"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid path", 400)
+		return
+	}
+	
+	channelID := parts[4]
+	if channelID != "2" {
+		http.Error(w, "Only channel 2 is currently supported", 400)
+		return
+	}
+
+	if err := psu.SetCurrent(req.Current); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
