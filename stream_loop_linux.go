@@ -197,22 +197,27 @@ func runGlobalStreamLoop(devicePath string) {
 			totalRingBytes := ring.Total()
 			ringData := ring.Data()
 			
-			bytesToRead := uint64(samplesNeeded * numChannels * bytesPerSample)
+			const inputBlockSize = 32 // 8 channels * 4 bytes
+			bytesToRead := uint64(samplesNeeded * inputBlockSize)
 			if bytesToRead > totalRingBytes {
 				bytesToRead = totalRingBytes
 			}
 
 			// Calculate start position (wrapping back from Head)
+			// Ensure it's aligned to 32 bytes!
 			var startPos uint64
 			if head >= bytesToRead {
 				startPos = head - bytesToRead
 			} else {
 				startPos = totalRingBytes - (bytesToRead - head)
 			}
+			
+			// Aligned to 32-byte frame
+			startPos = (startPos / inputBlockSize) * inputBlockSize
 
 			// Parse directly from ring buffer
 			for s := 0; s < samplesNeeded; s++ {
-				baseOffset := (startPos + uint64(s*numChannels*bytesPerSample)) % totalRingBytes
+				baseOffset := (startPos + uint64(s*inputBlockSize)) % totalRingBytes
 				for ch := 0; ch < numChannels; ch++ {
 					off := (baseOffset + uint64(ch*bytesPerSample)) % totalRingBytes
 					channelI[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off:]))
