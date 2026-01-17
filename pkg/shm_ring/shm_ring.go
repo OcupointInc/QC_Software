@@ -16,6 +16,7 @@ type RingHeader struct {
 	Tail     uint64 // Reader position (byte offset)
 	Version  uint32
 	Channels uint32
+	Padding  [24]byte // Align to 64 bytes
 }
 
 const (

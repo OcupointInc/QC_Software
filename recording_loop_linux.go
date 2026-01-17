@@ -208,7 +208,7 @@ func performXdmRecording() {
 		serverState.mu.Unlock()
 
 		// Broadcast progress every 100k samples
-		if samplesRecorded - lastBroadcast > 100000 {
+		if samplesRecorded-lastBroadcast > 100000 {
 			go broadcastJSON(map[string]interface{}{
 				"type":    "recording_progress",
 				"current": samplesRecorded,
@@ -216,6 +216,12 @@ func performXdmRecording() {
 			})
 			lastBroadcast = samplesRecorded
 		}
+	}
+
+	// Truncate to exact requested size (remove excess from last chunk)
+	if len(captureData) > totalBytes {
+		captureData = captureData[:totalBytes]
+		samplesRecorded = samplesTotal
 	}
 
 	processAndWrite(captureData, samplesRecorded, recChannels, captureStart)
