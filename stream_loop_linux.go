@@ -196,7 +196,7 @@ func runGlobalStreamLoop(devicePath string) {
 			head := ring.GetHead()
 			totalRingBytes := ring.Total()
 			ringData := ring.Data()
-			
+
 			const inputBlockSize = 32 // 8 channels * 4 bytes
 			bytesToRead := uint64(samplesNeeded * inputBlockSize)
 			if bytesToRead > totalRingBytes {
@@ -204,14 +204,29 @@ func runGlobalStreamLoop(devicePath string) {
 			}
 
 			// Calculate start position (wrapping back from Head)
-			// Ensure it's aligned to 32 bytes!
+			// IMPORTANT: If head hasn't advanced enough yet (producer just started),
+			// we must not read from unwritten regions. Only back up as far as
+			// we have valid data.
 			var startPos uint64
 			if head >= bytesToRead {
+				// Normal case: back up from head
 				startPos = head - bytesToRead
+			} else if head > 0 {
+				// Producer hasn't written enough yet - read from start of buffer
+				// This avoids reading stale/uninitialized data from end of buffer
+				startPos = 0
+				bytesToRead = head // Only read what's been written
+				samplesNeeded = int(bytesToRead / inputBlockSize)
+				if samplesNeeded == 0 {
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
 			} else {
-				startPos = totalRingBytes - (bytesToRead - head)
+				// head == 0: no data written yet, wait
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
-			
+
 			// Aligned to 32-byte frame
 			startPos = (startPos / inputBlockSize) * inputBlockSize
 

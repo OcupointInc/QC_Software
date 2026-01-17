@@ -14,10 +14,11 @@ import (
 )
 
 type RecordStartRequest struct {
-	Samples int             `json:"samples"`
-	Mode    string          `json:"mode"`  // "samples", "time", "size"
-	Value   string          `json:"value"` // Input string
-	Config  *HardwareConfig `json:"config"`
+	Samples  int             `json:"samples"`
+	Mode     string          `json:"mode"`  // "samples", "time", "size"
+	Value    string          `json:"value"` // Input string
+	Filename string          `json:"filename"`
+	Config   *HardwareConfig `json:"config"`
 }
 
 func parseSize(value string) (int, error) {
@@ -116,8 +117,20 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		os.Mkdir(dataDir, 0755)
 	}
 
-	// Generate filename: capture_YYYYMMDD_HHMMSS.bin
-	filename := fmt.Sprintf("capture_%s.bin", time.Now().Format("20060102_150405"))
+	// Determine filename
+	var filename string
+	if req.Filename != "" {
+		filename = req.Filename
+		if !strings.HasSuffix(filename, ".bin") {
+			filename += ".bin"
+		}
+		// Sanitize to prevent path traversal
+		filename = filepath.Base(filename)
+	} else {
+		// Generate filename: capture_YYYYMMDD_HHMMSS.bin
+		filename = fmt.Sprintf("capture_%s.bin", time.Now().Format("20060102_150405"))
+	}
+
 	fullPath := filepath.Join(dataDir, filename)
 
 	f, err := os.Create(fullPath)

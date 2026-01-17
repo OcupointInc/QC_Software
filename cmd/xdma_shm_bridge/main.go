@@ -86,7 +86,12 @@ func main() {
 		}
 
 		if n > 0 {
-			ring.AdvanceHead(uint64(n))
+			// Only advance by aligned amount (32 bytes = 8 channels * 4 bytes)
+			const inputBlockSize = 32
+			alignedBytes := (uint64(n) / inputBlockSize) * inputBlockSize
+			if alignedBytes > 0 {
+				ring.AdvanceHead(alignedBytes)
+			}
 			totalRead += uint64(n)
 			
 			// Performance reporting every 2 seconds

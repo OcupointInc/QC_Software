@@ -125,10 +125,15 @@ func runShmProducerLoop() {
 		}
 
 		if n > 0 {
-			// XDMA usually returns full 4KB blocks. We advance by exactly what we got.
-			// If n is not a multiple of 32, the hardware stream itself is misaligned
-			// or we hit an EOF, but we MUST advance Head to stay in sync with the FD.
-			ring.AdvanceHead(uint64(n))
+			// XDMA usually returns full 4KB blocks, but may occasionally return
+			// non-aligned amounts. We MUST only advance head by a multiple of 32
+			// (inputBlockSize) to maintain channel alignment. Any leftover bytes
+			// will be overwritten on the next read - this is safe because the
+			// ring buffer is much larger than a single read.
+			alignedBytes := (uint64(n) / inputBlockSize) * inputBlockSize
+			if alignedBytes > 0 {
+				ring.AdvanceHead(alignedBytes)
+			}
 		} else {
 			time.Sleep(1 * time.Millisecond)
 		}
@@ -203,6 +208,10 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	http.HandleFunc("/api/replay/select", handleReplaySelect)
 	http.HandleFunc("/api/replay/state", handleReplayState)
 	http.HandleFunc("/api/replay/toggle", handleReplayToggle)
+	http.HandleFunc("/api/replay/upload", handleReplayUpload)
+	http.HandleFunc("/api/replay/delete", handleReplayDelete)
+	http.HandleFunc("/api/replay/clear", handleReplayClear)
+	http.HandleFunc("/api/replay/seek", handleReplaySeek)
 	http.HandleFunc("/api/record/start", handleRecordStart)
 	http.HandleFunc("/api/record/stop", handleRecordStop)
 	http.HandleFunc("/api/record/status", handleRecordStatus)

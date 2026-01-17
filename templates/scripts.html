@@ -1475,9 +1475,15 @@
             // Start
             const mode = document.getElementById('recordMode').value;
             const valStr = document.getElementById('recordValue').value;
+            const filenameStr = document.getElementById('recordFilename').value.trim();
             
             if (!valStr) {
-                alert("Please enter a value");
+                alert("Please enter a value (samples/time/size)");
+                return;
+            }
+
+            if (!filenameStr) {
+                alert("Please enter a filename");
                 return;
             }
 
@@ -1488,6 +1494,7 @@
                     body: JSON.stringify({ 
                         mode: mode, 
                         value: valStr,
+                        filename: filenameStr,
                         samples: 0 // Server will calculate
                     })
                 });

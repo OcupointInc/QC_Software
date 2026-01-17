@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -483,28 +484,48 @@ func handleReplayFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type fileDetails struct {
+		Name    string
+		Size    int64
+		ModTime time.Time
+	}
+	var fileList []fileDetails
+
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bin") {
+			info, err := entry.Info()
+			if err == nil {
+				fileList = append(fileList, fileDetails{
+					Name:    entry.Name(),
+					Size:    info.Size(),
+					ModTime: info.ModTime(),
+				})
+			}
+		}
+	}
+
+	sort.Slice(fileList, func(i, j int) bool {
+		return fileList[i].ModTime.After(fileList[j].ModTime)
+	})
+
 	type FileInfo struct {
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	}
 
 	files := []FileInfo{}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bin") {
-			info, err := entry.Info()
-			if err == nil {
-				files = append(files, FileInfo{
-					Name: entry.Name(),
-					Size: info.Size(),
-				})
-			}
-		}
+	for _, f := range fileList {
+		files = append(files, FileInfo{
+			Name: f.Name,
+			Size: f.Size,
+		})
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"files": files,
 	})
 }
+
 
 func handleReplaySelect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -703,22 +724,41 @@ func broadcastFileList() {
 		return
 	}
 
+	type fileDetails struct {
+		Name    string
+		Size    int64
+		ModTime time.Time
+	}
+	var fileList []fileDetails
+
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bin") {
+			info, err := entry.Info()
+			if err == nil {
+				fileList = append(fileList, fileDetails{
+					Name:    entry.Name(),
+					Size:    info.Size(),
+					ModTime: info.ModTime(),
+				})
+			}
+		}
+	}
+
+	sort.Slice(fileList, func(i, j int) bool {
+		return fileList[i].ModTime.After(fileList[j].ModTime)
+	})
+
 	type FileInfo struct {
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	}
 
 	files := []FileInfo{}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bin") {
-			info, err := entry.Info()
-			if err == nil {
-				files = append(files, FileInfo{
-					Name: entry.Name(),
-					Size: info.Size(),
-				})
-			}
-		}
+	for _, f := range fileList {
+		files = append(files, FileInfo{
+			Name: f.Name,
+			Size: f.Size,
+		})
 	}
 
 	broadcastJSON(map[string]interface{}{
@@ -726,6 +766,7 @@ func broadcastFileList() {
 		"files": files,
 	})
 }
+
 
 func handleReplaySeek(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
