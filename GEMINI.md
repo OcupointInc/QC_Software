@@ -26,14 +26,25 @@ The system features:
 - `templates/` & `static/`: Web UI components.
 - `recording_loop_*.go`: OS-specific logic for high-speed data recording to disk.
 - `stream_loop_*.go`: OS-specific logic for streaming data to connected WebSocket clients.
+- `pkg/shm_ring/`: Shared memory ring buffer implementation for inter-process communication.
+- `cmd/xdma_shm_bridge/`: Standalone utility to bridge XDMA data into a high-speed SHM ring buffer.
 
 ## Building and Running
 
 ### Build
-To build the executable:
+To build the main executable and bridge tools:
 ```bash
-go build -o capture_sw
+go build -o capture_sw .
+go build -o xdma_shm_bridge ./cmd/xdma_shm_bridge
+go build -o shm_reader_test ./cmd/shm_reader_test
 ```
+
+### Shared Memory Bridge
+To run the high-speed bridge (8GB ring buffer):
+```bash
+./xdma_shm_bridge -dev /dev/xdma0_c2h_0 -size 8
+```
+Other processes can then access this data by mapping `/dev/shm/xdma_ring`.
 
 ### Run as Server
 To start the web server with PSU support:
