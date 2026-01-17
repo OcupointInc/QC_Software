@@ -32,9 +32,6 @@ type ShmRing struct {
 
 // Create creates a new shared memory ring buffer
 func Create(name string, size uint64) (*ShmRing, error) {
-	// 1. Open SHM using unix.SYS_SHM_OPEN or similar? 
-	// Actually, on Linux, SHM is just files in /dev/shm.
-	// Using os.OpenFile on /dev/shm/name is equivalent and safer.
 	path := "/dev/shm" + name
 	
 	f, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL, 0666)
@@ -112,7 +109,24 @@ func Open(name string) (*ShmRing, error) {
 	return ring, nil
 }
 
-// Write writes data into the ring buffer at the Head
+// Total returns the total data size
+func (r *ShmRing) Total() uint64 {
+	return r.total
+}
+
+// GetHead returns the current head position
+func (r *ShmRing) GetHead() uint64 {
+	return atomic.LoadUint64(&r.header.Head)
+}
+
+// AdvanceHead moves the head forward
+func (r *ShmRing) AdvanceHead(n uint64) {
+	head := atomic.LoadUint64(&r.header.Head)
+	newHead := (head + n) % r.total
+	atomic.StoreUint64(&r.header.Head, newHead)
+}
+
+// Write writes data into the ring buffer (legacy/convenience)
 func (r *ShmRing) Write(p []byte) (n int, err error) {
 	n = len(p)
 	if uint64(n) > r.total {
