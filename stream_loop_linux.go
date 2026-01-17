@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/dma/pkg/shm_ring"
 	"golang.org/x/sys/unix"
 )
 
@@ -22,6 +23,7 @@ func runGlobalStreamLoop(devicePath string) {
 
 	var fd int = -1
 	var deviceOpen bool = false
+	var ring *shm_ring.ShmRing
 
 	const numChannels = 8
 	const bytesPerSample = 4 // 2 bytes I + 2 bytes Q per channel
@@ -40,6 +42,9 @@ func runGlobalStreamLoop(devicePath string) {
 			if deviceOpen {
 				unix.Close(fd)
 			}
+			if ring != nil {
+				ring.Close()
+			}
 			return
 		}
 		wsClientsMu.Unlock()
@@ -53,6 +58,8 @@ func runGlobalStreamLoop(devicePath string) {
 		streamingEnabled := serverState.StreamingEnabled
 		forceReplayUpdate := serverState.ForceReplayUpdate
 		isRecording := serverState.Recording
+		useSHM := serverState.UseSHM
+		shmName := serverState.SHMName
 		serverState.mu.RUnlock()
 
 		if fps <= 0 {
@@ -61,8 +68,8 @@ func runGlobalStreamLoop(devicePath string) {
 		frameInterval := time.Second / time.Duration(fps)
 
 		// Check if we should be streaming anything at all
-		// If Recording is active, we must yield the device!
-		if isRecording {
+		// If Recording is active AND not using SHM, we must yield the device!
+		if isRecording && !useSHM {
 			if deviceOpen {
 				log.Println("Yielding device for recording...")
 				unix.Close(fd)
@@ -168,7 +175,57 @@ func runGlobalStreamLoop(devicePath string) {
 			serverState.ReplayOffset = offset
 			serverState.mu.Unlock()
 			
+		} else if useSHM {
+			// SHM MODE: Grab a snapshot from the ring buffer
+			if deviceOpen {
+				unix.Close(fd)
+				deviceOpen = false
+				fd = -1
+			}
+			if ring == nil {
+				var err error
+				ring, err = shm_ring.Open(shmName)
+				if err != nil {
+					log.Printf("Failed to open SHM for streaming: %v", err)
+					time.Sleep(1 * time.Second)
+					continue
+				}
+			}
+
+			// Get current head and back up samplesNeeded
+			head := ring.GetHead()
+			totalRingBytes := ring.Total()
+			ringData := ring.Data()
+			
+			bytesToRead := uint64(samplesNeeded * numChannels * bytesPerSample)
+			if bytesToRead > totalRingBytes {
+				bytesToRead = totalRingBytes
+			}
+
+			// Calculate start position (wrapping back from Head)
+			var startPos uint64
+			if head >= bytesToRead {
+				startPos = head - bytesToRead
+			} else {
+				startPos = totalRingBytes - (bytesToRead - head)
+			}
+
+			// Parse directly from ring buffer
+			for s := 0; s < samplesNeeded; s++ {
+				baseOffset := (startPos + uint64(s*numChannels*bytesPerSample)) % totalRingBytes
+				for ch := 0; ch < numChannels; ch++ {
+					off := (baseOffset + uint64(ch*bytesPerSample)) % totalRingBytes
+					channelI[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off:]))
+					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off+2:]))
+				}
+			}
+
 		} else {
+			// STANDARD XDMA MODE
+			if ring != nil {
+				ring.Close()
+				ring = nil
+			}
 			// Open device if not already open
 			if !deviceOpen {
 				var err error
@@ -227,6 +284,7 @@ func runGlobalStreamLoop(devicePath string) {
 				}
 			}
 		}
+
 
 		// Build output binary message
 		var outBuf []byte

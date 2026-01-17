@@ -9,15 +9,19 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/dma/pkg/shm_ring"
 	"github.com/gorilla/websocket"
+	"golang.org/x/sys/unix"
 )
 
 // WebSocket clients
 var (
-	wsClients         = make(map[*Client]bool)
-	wsClientsMu       sync.RWMutex
-	streamLoopRunning = false
+	wsClients          = make(map[*Client]bool)
+	wsClientsMu        sync.RWMutex
+	streamLoopRunning  = false
+	shmProducerRunning = false
 )
 
 type Client struct {
@@ -49,6 +53,79 @@ func (c *Client) writePump() {
 					return
 				}
 			}
+		}
+	}
+}
+
+// runShmProducerLoop continuously reads from XDMA into SHM ring buffer
+func runShmProducerLoop() {
+	defer func() {
+		shmProducerRunning = false
+		log.Println("SHM Producer loop stopped")
+	}()
+
+	serverState.mu.RLock()
+	devicePath := serverState.DevicePath
+	shmName := serverState.SHMName
+	serverState.mu.RUnlock()
+
+	log.Printf("Starting Integrated SHM Producer: %s -> %s", devicePath, shmName)
+
+	// Create/Open SHM Ring (8GB default)
+	const sizeBytes = 8 * 1024 * 1024 * 1024
+	shm_ring.Remove(shmName)
+	ring, err := shm_ring.Create(shmName, sizeBytes)
+	if err != nil {
+		log.Printf("Failed to create SHM ring in producer: %v", err)
+		return
+	}
+	defer ring.Close()
+
+	// Open XDMA Device
+	fd, err := unix.Open(devicePath, unix.O_RDONLY, 0)
+	if err != nil {
+		log.Printf("Failed to open XDMA for SHM producer: %v", err)
+		return
+	}
+	defer unix.Close(fd)
+
+	const blockSize = 4 * 1024 * 1024
+	ringData := ring.Data()
+	ringTotal := ring.Total()
+
+	for {
+		// If we are recording via direct XDMA (not SHM), we must yield
+		serverState.mu.RLock()
+		isRecording := serverState.Recording
+		useSHM := serverState.UseSHM
+		serverState.mu.RUnlock()
+
+		if isRecording && !useSHM {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		head := ring.GetHead()
+		spaceToEnd := ringTotal - head
+		readRequest := uint64(blockSize)
+		if readRequest > spaceToEnd {
+			readRequest = spaceToEnd
+		}
+
+		n, err := unix.Read(fd, ringData[head : head+readRequest])
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			log.Printf("SHM Producer read error: %v", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		if n > 0 {
+			ring.AdvanceHead(uint64(n))
+		} else {
+			time.Sleep(1 * time.Millisecond)
 		}
 	}
 }
@@ -209,6 +286,14 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 		if shouldStart {
 			go runGlobalStreamLoop(devicePath)
 		}
+
+		// Start SHM Producer if enabled
+		serverState.mu.RLock()
+		if serverState.UseSHM && !shmProducerRunning {
+			shmProducerRunning = true
+			go runShmProducerLoop()
+		}
+		serverState.mu.RUnlock()
 
 		// Start write pump
 		go client.writePump()
