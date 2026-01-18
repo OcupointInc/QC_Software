@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dma/pkg/psu"
 )
 
 const dataFolder = "data"
@@ -246,7 +248,7 @@ func runSweep(params *SweepParams) {
 
 // PSU handlers
 func handlePSUState(w http.ResponseWriter, r *http.Request) {
-	psu := GetGlobalPSU()
+	psu := psu.GetGlobalPSU()
 	if psu == nil {
 		http.Error(w, "PSU not initialized", 500)
 		return
@@ -297,7 +299,7 @@ func handlePSUEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	psu := GetGlobalPSU()
+	psu := psu.GetGlobalPSU()
 	if psu == nil {
 		http.Error(w, "PSU not initialized", 500)
 		return
@@ -340,7 +342,7 @@ func handlePSUVoltage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	psu := GetGlobalPSU()
+	psu := psu.GetGlobalPSU()
 	if psu == nil {
 		http.Error(w, "PSU not initialized", 500)
 		return
@@ -380,7 +382,7 @@ func handlePSUCurrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	psu := GetGlobalPSU()
+	psu := psu.GetGlobalPSU()
 	if psu == nil {
 		http.Error(w, "PSU not initialized", 500)
 		return

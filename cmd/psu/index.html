@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PSU Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; background: #fafafa; color: #333; }
+        .card { background: white; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .row { margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between; }
+        label { font-weight: bold; color: #555; }
+        input[type="number"] { padding: 8px; width: 100px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 8px 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        button:active { transform: translateY(1px); }
+        .status-val { font-family: monospace; font-size: 1.2em; font-weight: bold; }
+        .on { color: #28a745; }
+        .off { color: #dc3545; }
+        h1 { text-align: center; margin-bottom: 30px; }
+        h3 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 0; }
+        .controls { display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+    <h1>PSU Control (Keysight E3631A)</h1>
+    
+    <div class="card">
+        <h3>Status</h3>
+        <div class="row">
+            <label>Connection</label>
+            <span id="connectionStatus" class="status-val">Checking...</span>
+        </div>
+        <div class="row">
+            <label>Identity</label>
+            <span id="identity" class="status-val" style="font-size: 0.9em;">...</span>
+        </div>
+        <div class="row">
+            <label>Output</label>
+            <div class="controls">
+                <span id="outputStatus" class="status-val off" style="margin-right: 15px; display: flex; align-items: center;">OFF</span>
+                <button onclick="toggleOutput()" id="toggleBtn" style="background: #dc3545;">Enable</button>
+            </div>
+        </div>
+        <div class="row">
+            <label>Measured Voltage</label>
+            <span id="measVoltage" class="status-val">0.000 V</span>
+        </div>
+        <div class="row">
+            <label>Measured Current</label>
+            <span id="measCurrent" class="status-val">0.000 A</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Settings (Channel P25V)</h3>
+        <div class="row">
+            <label>Set Voltage (V)</label>
+            <div class="controls">
+                <input type="number" id="setVoltage" step="0.001" min="0" max="25">
+                <button onclick="updateVoltage()">Set</button>
+            </div>
+        </div>
+        <div class="row">
+            <label>Set Current (A)</label>
+            <div class="controls">
+                <input type="number" id="setCurrent" step="0.001" min="0" max="1">
+                <button onclick="updateCurrent()">Set</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function updateState() {
+            fetch('/api/psu/state')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('connectionStatus').textContent = data.connected ? "Connected" : "Disconnected";
+                    document.getElementById('connectionStatus').style.color = data.connected ? "#28a745" : "#dc3545";
+                    document.getElementById('identity').textContent = data.identity || "-";
+                    
+                    const outEnabled = data.output_enabled;
+                    const outSpan = document.getElementById('outputStatus');
+                    outSpan.textContent = outEnabled ? "ON" : "OFF";
+                    outSpan.className = "status-val " + (outEnabled ? "on" : "off");
+                    
+                    const btn = document.getElementById('toggleBtn');
+                    btn.textContent = outEnabled ? "Disable" : "Enable";
+                    btn.style.background = outEnabled ? "#dc3545" : "#28a745"; // Red for Disable, Green for Enable
+
+                    document.getElementById('measVoltage').textContent = data.measured_voltage.toFixed(3) + " V";
+                    document.getElementById('measCurrent').textContent = data.measured_current.toFixed(3) + " A";
+                    
+                    // Only update inputs if not focused
+                    if (document.activeElement.id !== 'setVoltage') {
+                        document.getElementById('setVoltage').value = data.set_voltage;
+                    }
+                    if (document.activeElement.id !== 'setCurrent') {
+                        document.getElementById('setCurrent').value = data.set_current;
+                    }
+                })
+                .catch(e => console.error(e));
+        }
+
+        function toggleOutput() {
+            const isEnabled = document.getElementById('outputStatus').textContent === "ON";
+            fetch('/api/psu/output/2/enable', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: !isEnabled})
+            }).then(updateState);
+        }
+
+        function updateVoltage() {
+            const val = parseFloat(document.getElementById('setVoltage').value);
+            fetch('/api/psu/voltage', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({voltage: val})
+            }).then(updateState);
+        }
+
+        function updateCurrent() {
+            const val = parseFloat(document.getElementById('setCurrent').value);
+            fetch('/api/psu/current', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({current: val})
+            }).then(updateState);
+        }
+
+        setInterval(updateState, 1000);
+        updateState();
+    </script>
+</body>
+</html>
