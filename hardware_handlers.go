@@ -14,8 +14,27 @@ const DesignClockMHz = 250.0
 var hwController *HardwareController
 
 // Initialize hardware controller
-func initHardwareController(commandDevice string) {
+func initHardwareController(commandDevice string) error {
 	hwController = NewHardwareController(commandDevice)
+
+	// Open the device file for persistent access
+	if err := hwController.Open(); err != nil {
+		return fmt.Errorf("failed to open command device: %w", err)
+	}
+
+	// Verify connection by reading status
+	if _, err := hwController.readPCIeBytes(STATUS_ADDR); err != nil {
+		hwController.Close()
+		return fmt.Errorf("failed to access hardware: %w", err)
+	}
+
+	// Perform a test handshake to ensure BRAM logic is responsive
+	// This uses a dummy update to verify the full command loop
+	log.Println("Verifying hardware handshake...")
+	if err := hwController.TestConnection(); err != nil {
+		hwController.Close()
+		return fmt.Errorf("hardware handshake failed (timeout/error): %w", err)
+	}
 
 	// Try to setup BRAM on startup
 	if err := hwController.SetupBRAM(); err != nil {
@@ -30,6 +49,8 @@ func initHardwareController(commandDevice string) {
 		serverState.mu.Unlock()
 		log.Printf("Initialized center frequency from hardware: %.3f MHz", serverState.DDCFreqMHz)
 	}
+	
+	return nil
 }
 
 // setDDCFrequency sets the DDC frequency with clock domain scaling
@@ -64,6 +85,14 @@ func handleDDCFreqUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
 
 	var req struct {
 		DDCIndex int     `json:"ddc_index"` // 0, 1, or 2
@@ -115,6 +144,14 @@ func handleDDCEnable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
 
 	var req struct {
 		DDCIndex int  `json:"ddc_index"` // 0, 1, or 2
@@ -174,6 +211,14 @@ func handleAttenuationUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
+
 	var req struct {
 		AttenuationDB int `json:"attenuation_db"` // 0-31
 	}
@@ -215,6 +260,14 @@ func handleFilterSelect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
 
 	var req struct {
 		Filter string `json:"filter"` // "500mhz", "1ghz", "2ghz", "bypass"
@@ -275,6 +328,14 @@ func handleCalibrationMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
+
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -317,6 +378,14 @@ func handleSystemEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
+
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -356,6 +425,29 @@ func handleSystemEnable(w http.ResponseWriter, r *http.Request) {
 func handleHardwareState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	serverState.mu.RLock()
+	hwAvailable := serverState.HardwareAvailable
+	serverState.mu.RUnlock()
+
+	if !hwAvailable {
+		// Return last known state or defaults
+		serverState.mu.RLock()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ddc0_freq_mhz":  int(serverState.DDCFreqMHz), // Approximate
+			"ddc1_freq_mhz":  0,
+			"ddc2_freq_mhz":  0,
+			"ddc0_enabled":   false,
+			"ddc1_enabled":   false,
+			"ddc2_enabled":   false,
+			"attenuation_db": 0,
+			"cal_enabled":    false,
+			"system_enabled": false,
+			"active_filter":  "unknown",
+		})
+		serverState.mu.RUnlock()
 		return
 	}
 

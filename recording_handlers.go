@@ -87,6 +87,14 @@ func handleRecordStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serverState.mu.RLock()
+	if !serverState.HardwareAvailable {
+		serverState.mu.RUnlock()
+		http.Error(w, "Hardware unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverState.mu.RUnlock()
+
 	// Apply hardware configuration if provided
 	if req.Config != nil && hwController != nil {
 		if err := hwController.ApplyConfig(req.Config); err != nil {

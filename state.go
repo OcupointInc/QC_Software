@@ -46,12 +46,12 @@ type ServerState struct {
 		RecordingChannels  []int // Channel indices active during this recording (0-7)
 		RecordingFileHandle *os.File
 
-		// System
-		DevicePath string
-		UseSHM     bool
-		SHMName    string
-	}
-
+			// System
+			DevicePath        string
+			UseSHM            bool
+			SHMName           string
+			HardwareAvailable bool
+		}
 	// CaptureMetadata represents the metadata saved alongside a capture
 	type CaptureMetadata struct {
 		Timestamp   string          `json:"timestamp"`

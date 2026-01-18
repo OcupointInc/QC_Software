@@ -104,12 +104,14 @@ type HardwareConfig struct {
 // HardwareController manages FPGA parameter control via PCIe
 type HardwareController struct {
 	commandDevice string
+	file          *os.File
 	params        map[ParamID]*Parameter
 	mu            sync.RWMutex
 }
 
 // Parameter table mapping
 var paramTable = []Parameter{
+// ... (keep paramTable as is)
 	{CH0_EN, "CH0_EN", 0},
 	{CH1_EN, "CH1_EN", 0},
 	{CH2_EN, "CH2_EN", 0},
@@ -156,8 +158,41 @@ func NewHardwareController(commandDevice string) *HardwareController {
 	return hc
 }
 
+// Open opens the device file
+func (hc *HardwareController) Open() error {
+	f, err := os.OpenFile(hc.commandDevice, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	hc.file = f
+	return nil
+}
+
+// Close closes the device file
+func (hc *HardwareController) Close() error {
+	if hc.file != nil {
+		return hc.file.Close()
+	}
+	return nil
+}
+
+// TestConnection verifies that the hardware is responsive to BRAM updates
+func (hc *HardwareController) TestConnection() error {
+	// Update param index 0 (CH0_EN) with its current value (0)
+	// This forces a handshake cycle without changing state
+	// We use a shorter timeout for this test
+	
+	// Temporarily hijack updateBRAM logic here to use shorter timeout?
+	// Or just rely on updateBRAM.
+	// Since we optimized file IO, updateBRAM should be fast (ms not seconds).
+	// So 1s timeout is generous and sufficient.
+	
+	return hc.updateBRAM(0)
+}
+
 // SetupBRAM initializes BRAM if hardware requests it
 func (hc *HardwareController) SetupBRAM() error {
+// ...
 	status, err := hc.readPCIeBytes(STATUS_ADDR)
 	if err != nil {
 		return fmt.Errorf("failed to read status: %w", err)
@@ -518,14 +553,19 @@ func (hc *HardwareController) GetConfig() *HardwareConfig {
 
 // writePCIeBytes writes a 32-bit value to PCIe device at offset
 func (hc *HardwareController) writePCIeBytes(data uint32, offset int) error {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, data)
+
+	if hc.file != nil {
+		_, err := hc.file.WriteAt(buf, int64(offset*4))
+		return err
+	}
+
 	f, err := os.OpenFile(hc.commandDevice, os.O_WRONLY, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open command device: %w", err)
 	}
 	defer f.Close()
-
-	buf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(buf, data)
 
 	_, err = f.WriteAt(buf, int64(offset*4))
 	return err
@@ -533,13 +573,22 @@ func (hc *HardwareController) writePCIeBytes(data uint32, offset int) error {
 
 // readPCIeBytes reads a 32-bit value from PCIe device at offset
 func (hc *HardwareController) readPCIeBytes(offset int) (uint32, error) {
+	buf := make([]byte, 4)
+	
+	if hc.file != nil {
+		_, err := hc.file.ReadAt(buf, int64(offset*4))
+		if err != nil {
+			return 0, err
+		}
+		return binary.LittleEndian.Uint32(buf), nil
+	}
+
 	f, err := os.OpenFile(hc.commandDevice, os.O_RDONLY, 0)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open command device: %w", err)
 	}
 	defer f.Close()
 
-	buf := make([]byte, 4)
 	_, err = f.ReadAt(buf, int64(offset*4))
 	if err != nil {
 		return 0, err

@@ -60,6 +60,7 @@ func runGlobalStreamLoop(devicePath string) {
 		isRecording := serverState.Recording
 		useSHM := serverState.UseSHM
 		shmName := serverState.SHMName
+		hwAvailable := serverState.HardwareAvailable
 		serverState.mu.RUnlock()
 
 		if fps <= 0 {
@@ -175,134 +176,140 @@ func runGlobalStreamLoop(devicePath string) {
 			serverState.ReplayOffset = offset
 			serverState.mu.Unlock()
 			
-		} else if useSHM {
-			// SHM MODE: Grab a snapshot from the ring buffer
-			if deviceOpen {
-				unix.Close(fd)
-				deviceOpen = false
-				fd = -1
-			}
-			if ring == nil {
-				var err error
-				ring, err = shm_ring.Open(shmName)
-				if err != nil {
-					log.Printf("Failed to open SHM for streaming: %v", err)
-					time.Sleep(1 * time.Second)
-					continue
+		} else if hwAvailable {
+			if useSHM {
+				// SHM MODE: Grab a snapshot from the ring buffer
+				if deviceOpen {
+					unix.Close(fd)
+					deviceOpen = false
+					fd = -1
 				}
-			}
-
-			// Get current head and back up samplesNeeded
-			head := ring.GetHead()
-			totalRingBytes := ring.Total()
-			ringData := ring.Data()
-
-			const inputBlockSize = 32 // 8 channels * 4 bytes
-			bytesToRead := uint64(samplesNeeded * inputBlockSize)
-			if bytesToRead > totalRingBytes {
-				bytesToRead = totalRingBytes
-			}
-
-			// Calculate start position (wrapping back from Head)
-			// IMPORTANT: If head hasn't advanced enough yet (producer just started),
-			// we must not read from unwritten regions. Only back up as far as
-			// we have valid data.
-			var startPos uint64
-			if head >= bytesToRead {
-				// Normal case: back up from head
-				startPos = head - bytesToRead
-			} else if head > 0 {
-				// Producer hasn't written enough yet - read from start of buffer
-				// This avoids reading stale/uninitialized data from end of buffer
-				startPos = 0
-				bytesToRead = head // Only read what's been written
-				samplesNeeded = int(bytesToRead / inputBlockSize)
-				if samplesNeeded == 0 {
-					time.Sleep(10 * time.Millisecond)
-					continue
-				}
-			} else {
-				// head == 0: no data written yet, wait
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-
-			// Aligned to 32-byte frame
-			startPos = (startPos / inputBlockSize) * inputBlockSize
-
-			// Parse directly from ring buffer
-			for s := 0; s < samplesNeeded; s++ {
-				baseOffset := (startPos + uint64(s*inputBlockSize)) % totalRingBytes
-				for ch := 0; ch < numChannels; ch++ {
-					off := (baseOffset + uint64(ch*bytesPerSample)) % totalRingBytes
-					channelI[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off:]))
-					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off+2:]))
-				}
-			}
-
-		} else {
-			// STANDARD XDMA MODE
-			if ring != nil {
-				ring.Close()
-				ring = nil
-			}
-			// Open device if not already open
-			if !deviceOpen {
-				var err error
-				fd, err = unix.Open(devicePath, unix.O_RDONLY, 0)
-				if err != nil {
-					log.Printf("Could not open device %s: %v", devicePath, err)
-					go broadcastJSON(map[string]string{"error": fmt.Sprintf("Could not open device: %v", err)})
-					time.Sleep(1 * time.Second) // Wait before retrying
-					continue
-				}
-				deviceOpen = true
-
-				// Increase pipe buffer for better throughput
-				const maxPipeSize = 1024 * 1024
-				unix.FcntlInt(uintptr(fd), unix.F_SETPIPE_SZ, maxPipeSize)
-			}
-
-			// Read data from device
-			bytesNeeded := samplesNeeded * numChannels * bytesPerSample
-			if len(buf) < bytesNeeded {
-				buf = make([]byte, bytesNeeded)
-			}
-			
-			totalRead := 0
-			for totalRead < bytesNeeded {
-				n, err := unix.Read(fd, buf[totalRead:])
-				if err != nil {
-					if err == unix.EINTR {
+				if ring == nil {
+					var err error
+					ring, err = shm_ring.Open(shmName)
+					if err != nil {
+						log.Printf("Failed to open SHM for streaming: %v", err)
+						time.Sleep(1 * time.Second)
 						continue
 					}
-					log.Printf("Read error: %v", err)
-					if deviceOpen {
-						unix.Close(fd)
-						deviceOpen = false
-					}
-					time.Sleep(10 * time.Millisecond)
-					break // Retry outer loop
 				}
-				if n == 0 {
+
+				// Get current head and back up samplesNeeded
+				head := ring.GetHead()
+				totalRingBytes := ring.Total()
+				ringData := ring.Data()
+
+				const inputBlockSize = 32 // 8 channels * 4 bytes
+				bytesToRead := uint64(samplesNeeded * inputBlockSize)
+				if bytesToRead > totalRingBytes {
+					bytesToRead = totalRingBytes
+				}
+
+				// Calculate start position (wrapping back from Head)
+				// IMPORTANT: If head hasn't advanced enough yet (producer just started),
+				// we must not read from unwritten regions. Only back up as far as
+				// we have valid data.
+				var startPos uint64
+				if head >= bytesToRead {
+					// Normal case: back up from head
+					startPos = head - bytesToRead
+				} else if head > 0 {
+					// Producer hasn't written enough yet - read from start of buffer
+					// This avoids reading stale/uninitialized data from end of buffer
+					startPos = 0
+					bytesToRead = head // Only read what's been written
+					samplesNeeded = int(bytesToRead / inputBlockSize)
+					if samplesNeeded == 0 {
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+				} else {
+					// head == 0: no data written yet, wait
 					time.Sleep(10 * time.Millisecond)
 					continue
 				}
-				totalRead += n
-			}
-			if totalRead < bytesNeeded {
-				continue // Incomplete frame
-			}
-			
-			// Parse Device Data (Standard 8-ch interleaved)
-			for s := 0; s < samplesNeeded; s++ {
-				baseOffset := s * numChannels * bytesPerSample
-				for ch := 0; ch < numChannels; ch++ {
-					offset := baseOffset + ch*bytesPerSample
-					channelI[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset:]))
-					channelQ[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset+2:]))
+
+				// Aligned to 32-byte frame
+				startPos = (startPos / inputBlockSize) * inputBlockSize
+
+				// Parse directly from ring buffer
+				for s := 0; s < samplesNeeded; s++ {
+					baseOffset := (startPos + uint64(s*inputBlockSize)) % totalRingBytes
+					for ch := 0; ch < numChannels; ch++ {
+						off := (baseOffset + uint64(ch*bytesPerSample)) % totalRingBytes
+						channelI[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off:]))
+						channelQ[ch][s] = int16(binary.LittleEndian.Uint16(ringData[off+2:]))
+					}
+				}
+
+			} else {
+				// STANDARD XDMA MODE
+				if ring != nil {
+					ring.Close()
+					ring = nil
+				}
+				// Open device if not already open
+				if !deviceOpen {
+					var err error
+					fd, err = unix.Open(devicePath, unix.O_RDONLY, 0)
+					if err != nil {
+						log.Printf("Could not open device %s: %v", devicePath, err)
+						go broadcastJSON(map[string]string{"error": fmt.Sprintf("Could not open device: %v", err)})
+						time.Sleep(1 * time.Second) // Wait before retrying
+						continue
+					}
+					deviceOpen = true
+
+					// Increase pipe buffer for better throughput
+					const maxPipeSize = 1024 * 1024
+					unix.FcntlInt(uintptr(fd), unix.F_SETPIPE_SZ, maxPipeSize)
+				}
+
+				// Read data from device
+				bytesNeeded := samplesNeeded * numChannels * bytesPerSample
+				if len(buf) < bytesNeeded {
+					buf = make([]byte, bytesNeeded)
+				}
+				
+				totalRead := 0
+				for totalRead < bytesNeeded {
+					n, err := unix.Read(fd, buf[totalRead:])
+					if err != nil {
+						if err == unix.EINTR {
+							continue
+						}
+						log.Printf("Read error: %v", err)
+						if deviceOpen {
+							unix.Close(fd)
+							deviceOpen = false
+						}
+						time.Sleep(10 * time.Millisecond)
+						break // Retry outer loop
+					}
+					if n == 0 {
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+					totalRead += n
+				}
+				if totalRead < bytesNeeded {
+					continue // Incomplete frame
+				}
+				
+				// Parse Device Data (Standard 8-ch interleaved)
+				for s := 0; s < samplesNeeded; s++ {
+					baseOffset := s * numChannels * bytesPerSample
+					for ch := 0; ch < numChannels; ch++ {
+						offset := baseOffset + ch*bytesPerSample
+						channelI[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset:]))
+						channelQ[ch][s] = int16(binary.LittleEndian.Uint16(buf[offset+2:]))
+					}
 				}
 			}
+		} else {
+			// No hardware available and not in replay mode
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 

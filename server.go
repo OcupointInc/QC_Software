@@ -142,7 +142,18 @@ func runShmProducerLoop() {
 
 func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	commandDevice := "/dev/xdma0_user"
-	initHardwareController(commandDevice)
+	
+	if err := initHardwareController(commandDevice); err != nil {
+		log.Printf("HARDWARE UNAVAILABLE: %v", err)
+		log.Println("Starting server in OFFLINE mode (Replay only)")
+		serverState.mu.Lock()
+		serverState.HardwareAvailable = false
+		serverState.mu.Unlock()
+	} else {
+		serverState.mu.Lock()
+		serverState.HardwareAvailable = true
+		serverState.mu.Unlock()
+	}
 
 	if psuAddress != "" {
 		if err := InitGlobalPSU(psuAddress); err != nil {
@@ -153,7 +164,12 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	if configData, err := os.ReadFile("config.json"); err == nil {
 		var config HardwareConfig
 		if err := json.Unmarshal(configData, &config); err == nil {
-			if hwController != nil {
+			// Only apply hardware config if hardware is available
+			serverState.mu.RLock()
+			hwAvailable := serverState.HardwareAvailable
+			serverState.mu.RUnlock()
+			
+			if hwAvailable && hwController != nil {
 				hwController.ApplyConfig(&config)
 			}
 			if len(config.Channels) > 0 {
@@ -227,14 +243,22 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 		if shouldStart { streamLoopRunning = true }
 		wsClientsMu.Unlock()
 
-		if shouldStart { go runGlobalStreamLoop(devicePath) }
-
 		serverState.mu.RLock()
-		if serverState.UseSHM && !shmProducerRunning {
-			shmProducerRunning = true
-			go runShmProducerLoop()
-		}
+		hwAvailable := serverState.HardwareAvailable
 		serverState.mu.RUnlock()
+
+		if shouldStart { 
+			go runGlobalStreamLoop(devicePath) 
+
+			if hwAvailable {
+				serverState.mu.RLock()
+				if serverState.UseSHM && !shmProducerRunning {
+					shmProducerRunning = true
+					go runShmProducerLoop()
+				}
+				serverState.mu.RUnlock()
+			}
+		}
 
 		go client.writePump()
 		defer func() {
