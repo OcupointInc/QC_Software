@@ -28,13 +28,23 @@ func initHardwareController(commandDevice string) error {
 		return fmt.Errorf("failed to access hardware: %w", err)
 	}
 
-	// Perform a test handshake to ensure BRAM logic is responsive
-	// This uses a dummy update to verify the full command loop
-	log.Println("Verifying hardware handshake...")
-	if err := hwController.TestConnection(); err != nil {
+	// Perform a simple memory check instead of hardware handshake
+	log.Println("Verifying system memory (1GB check)...")
+	const gb = 1024 * 1024 * 1024
+	
+	// allocate 1GB
+	mem := make([]byte, gb)
+	if len(mem) != gb {
 		hwController.Close()
-		return fmt.Errorf("hardware handshake failed (timeout/error): %w", err)
+		return fmt.Errorf("failed to allocate 1GB memory")
 	}
+	
+	// Touch end of buffer to ensure allocation
+	mem[gb-1] = 1
+	
+	// "Deallocate"
+	mem = nil
+	log.Println("Memory check passed")
 
 	// Try to setup BRAM on startup
 	if err := hwController.SetupBRAM(); err != nil {

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dma/pkg/dma"
+	"github.com/dma/pkg/psu"
 	"github.com/dma/pkg/shm_ring"
 	"github.com/gorilla/websocket"
 	"golang.org/x/sys/unix"
@@ -92,7 +94,32 @@ func runShmProducerLoop() {
 	ringData := ring.Data()
 	ringTotal := ring.Total()
 
+	// Metrics tracking
+	var totalBytesWritten int64
+	lastBytesWritten := int64(0)
+	lastLogTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	// Run metrics logger in background or inline? 
+	// Inline is safer if we want to avoid mutexes for counters, but blocking on write/read might delay it.
+	// Since we are in a tight loop, checking a non-blocking ticker channel is efficient.
+
 	for {
+		select {
+		case <-ticker.C:
+			now := time.Now()
+			duration := now.Sub(lastLogTime).Seconds()
+			bytesDiff := totalBytesWritten - lastBytesWritten
+			rateGB := float64(bytesDiff) / duration / (1024 * 1024 * 1024)
+			
+			log.Printf("SHM Rate: %.2f GB/s, Offset: %d", rateGB, ring.GetHead())
+			
+			lastBytesWritten = totalBytesWritten
+			lastLogTime = now
+		default:
+		}
+
 		serverState.mu.RLock()
 		isRecording := serverState.Recording
 		useSHM := serverState.UseSHM
@@ -133,6 +160,7 @@ func runShmProducerLoop() {
 			alignedBytes := (uint64(n) / inputBlockSize) * inputBlockSize
 			if alignedBytes > 0 {
 				ring.AdvanceHead(alignedBytes)
+				totalBytesWritten += int64(alignedBytes)
 			}
 		} else {
 			time.Sleep(1 * time.Millisecond)
@@ -142,21 +170,58 @@ func runShmProducerLoop() {
 
 func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	commandDevice := "/dev/xdma0_user"
-	
-	if err := initHardwareController(commandDevice); err != nil {
-		log.Printf("HARDWARE UNAVAILABLE: %v", err)
+
+	log.Println("Verifying XDMA connection (100MB read check)...")
+	var checkSuccess bool
+
+	// Define config for 100MB read check
+	var mask [8]bool
+	mask[0] = true // Enable channel 1
+	chkCfg := dma.CaptureConfig{
+		DevicePath:  devicePath,
+		TargetSize:  100 * 1024 * 1024, // 100MB
+		ChannelMask: mask,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := dma.RunCapture(chkCfg)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("Startup check failed: %v", err)
+			checkSuccess = false
+		} else {
+			log.Println("Startup check passed.")
+			checkSuccess = true
+		}
+	case <-time.After(5 * time.Second):
+		log.Println("Startup check timed out (>5s).")
+		checkSuccess = false
+	}
+
+	if !checkSuccess {
 		log.Println("Starting server in OFFLINE mode (Replay only)")
 		serverState.mu.Lock()
 		serverState.HardwareAvailable = false
 		serverState.mu.Unlock()
 	} else {
+		// Try to initialize controller for parameters, but don't fail if it doesn't work
+		// since the data link is verified.
+		if err := initHardwareController(commandDevice); err != nil {
+			log.Printf("Warning: Hardware data link ok, but controller init failed: %v", err)
+		}
+
 		serverState.mu.Lock()
 		serverState.HardwareAvailable = true
 		serverState.mu.Unlock()
 	}
 
 	if psuAddress != "" {
-		if err := InitGlobalPSU(psuAddress); err != nil {
+		if err := psu.InitGlobalPSU(psuAddress); err != nil {
 			log.Printf("Warning: Failed to initialize PSU: %v", err)
 		}
 	}

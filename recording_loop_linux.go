@@ -51,6 +51,10 @@ func performShmRecording() {
 	lastBroadcast := 0
 	captureStart := time.Now()
 
+	// Data rate logging
+	lastLogTime := time.Now()
+	var bytesReadSinceLastLog int64
+
 	ringData := ring.Data()
 	ringTotal := ring.Total()
 	
@@ -97,6 +101,16 @@ func performShmRecording() {
 			captureData = append(captureData, ringData[currentPos:currentPos+chunkSize]...)
 			currentPos = (currentPos + chunkSize) % ringTotal
 			toRead -= chunkSize
+		}
+
+		// Log data rate every 2 seconds
+		bytesReadSinceLastLog += int64(available)
+		if time.Since(lastLogTime) >= 2*time.Second {
+			duration := time.Since(lastLogTime).Seconds()
+			rateGBps := (float64(bytesReadSinceLastLog) / (1024 * 1024 * 1024)) / duration
+			log.Printf("Data Rate: %.4f GB/s", rateGBps)
+			lastLogTime = time.Now()
+			bytesReadSinceLastLog = 0
 		}
 
 		samplesRecorded = len(captureData) / inputBlockSize
