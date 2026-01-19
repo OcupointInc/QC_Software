@@ -34,7 +34,23 @@ func runGlobalStreamLoop(devicePath string) {
 	// Reusable buffer for device read
 	var buf []byte
 
+	// Metrics
+	lastLogTime := time.Now()
+	var bytesProcessed int64
+
 	for {
+		// Log metrics every 2s
+		if time.Since(lastLogTime) >= 2*time.Second {
+			duration := time.Since(lastLogTime).Seconds()
+			rateMBps := (float64(bytesProcessed) / (1024 * 1024)) / duration
+			// Only log if we are actually processing data (to avoid spam in idle)
+			if bytesProcessed > 0 {
+				log.Printf("Stream Rate: %.2f MB/s", rateMBps)
+			}
+			lastLogTime = time.Now()
+			bytesProcessed = 0
+		}
+
 		// Check if we should exit (no clients)
 		wsClientsMu.Lock()
 		if len(wsClients) == 0 {
@@ -295,6 +311,8 @@ func runGlobalStreamLoop(devicePath string) {
 				if totalRead < bytesNeeded {
 					continue // Incomplete frame
 				}
+
+				bytesProcessed += int64(totalRead)
 				
 				// Parse Device Data (Standard 8-ch interleaved)
 				for s := 0; s < samplesNeeded; s++ {

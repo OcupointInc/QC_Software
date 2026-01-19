@@ -61,14 +61,14 @@ func main() {
 	duration := flag.Duration("t", 0, "Duration to capture (e.g., 10s, 500ms) (overrides -n and -s)")
 
 	// CLI-specific flags
-	outputFile := flag.String("o", "capture.bin", "Output filename (CLI mode only)")
+	outputFile := flag.String("o", "", "Output filename (CLI mode only). If empty, data is not saved.")
 	configFile := flag.String("c", "", "Hardware configuration JSON file (CLI mode only)")
 	channels := flag.String("channels", "1,2,3,4,5,6,7,8", "Comma-separated list of channels (1-8) to capture (CLI mode only)")
+	benchMode := flag.Bool("bench", false, "Run in benchmark mode (continuous capture to RAM)")
 
 	// Server-specific flags
 	isServer := flag.Bool("server", false, "Run in WebSocket server mode")
 	port := flag.Int("p", 8080, "Port to listen on (Server mode only)")
-	psuAddr := flag.String("psu", "TCPIP::192.168.1.200::inst0::INSTR", "PSU VISA address (Server mode only)")
 	useSHM := flag.Bool("use-shm", false, "Use shared memory ring buffer for recording/streaming")
 	shmName := flag.String("shm-name", "/xdma_ring", "SHM ring buffer name")
 
@@ -135,8 +135,8 @@ func main() {
 	}
 
 	if *isServer {
-		runServer(*port, *device, targetSize, *psuAddr)
+		runServer(*port, *device, targetSize)
 	} else {
-		runCLI(*device, targetSize, *outputFile, *configFile, *channels)
+		runCLI(*device, targetSize, *outputFile, *configFile, *channels, *benchMode)
 	}
 }

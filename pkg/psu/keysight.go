@@ -372,14 +372,14 @@ func (p *KeysightE3631A) StartPolling(interval time.Duration) {
 
 		for range ticker.C {
 			if !p.IsConnected() {
-				// Try to reconnect
-				if err := p.Connect(); err != nil {
-					continue
-				}
+				// Connection lost, stop polling
+				log.Println("PSU disconnected, stopping poll loop.")
+				return
 			}
 
 			if err := p.Poll(); err != nil {
 				log.Printf("PSU poll error: %v", err)
+				// Poll marks disconnected on error, so next loop will exit
 			}
 		}
 	}()

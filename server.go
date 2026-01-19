@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/dma/pkg/dma"
-	"github.com/dma/pkg/psu"
 	"github.com/dma/pkg/shm_ring"
 	"github.com/gorilla/websocket"
 	"golang.org/x/sys/unix"
@@ -168,7 +167,7 @@ func runShmProducerLoop() {
 	}
 }
 
-func runServer(port int, devicePath string, targetSize int, psuAddress string) {
+func runServer(port int, devicePath string, targetSize int) {
 	commandDevice := "/dev/xdma0_user"
 
 	log.Println("Verifying XDMA connection (100MB read check)...")
@@ -220,12 +219,6 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 		serverState.mu.Unlock()
 	}
 
-	if psuAddress != "" {
-		if err := psu.InitGlobalPSU(psuAddress); err != nil {
-			log.Printf("Warning: Failed to initialize PSU: %v", err)
-		}
-	}
-
 	if configData, err := os.ReadFile("config.json"); err == nil {
 		var config HardwareConfig
 		if err := json.Unmarshal(configData, &config); err == nil {
@@ -275,9 +268,6 @@ func runServer(port int, devicePath string, targetSize int, psuAddress string) {
 	http.HandleFunc("/api/sweep/start", handleSweepStart)
 	http.HandleFunc("/api/sweep/stop", handleSweepStop)
 	http.HandleFunc("/api/sweep/state", handleSweepState)
-	http.HandleFunc("/api/psu/state", handlePSUState)
-	http.HandleFunc("/api/psu/output/1/enable", handlePSUEnable)
-	http.HandleFunc("/api/psu/output/2/enable", handlePSUEnable)
 	http.HandleFunc("/api/hardware/state", handleHardwareState)
 	http.HandleFunc("/api/hardware/ddc/freq", handleDDCFreqUpdate)
 	http.HandleFunc("/api/hardware/ddc/enable", handleDDCEnable)

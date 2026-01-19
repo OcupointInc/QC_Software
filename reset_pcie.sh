@@ -1,49 +1,91 @@
 #!/bin/bash
 
-# Configuration
-PCI_ADDR="0005:01:00.0"
-DRIVER_NAME="xdma"
+# --- Configuration ---
+# The PCIe Domain we are looking for (0005 for C5)
+TARGET_DOMAIN_ID=5
+# The Driver Name (usually tegra194-pcie even on Orin)
+DRIVER_PATH=$(find /sys/bus/platform/drivers -name "tegra194-pcie" -o -name "tegra234-pcie" | head -n 1)
 
-echo "--- Starting XDMA Recovery Sequence ---"
+echo "--- Starting Platform-Level PCIe Recovery ---"
 
-# 1. Remove the driver if it is currently loaded
-if lsmod | grep -q "$DRIVER_NAME"; then
-    echo "[1/4] Removing existing $DRIVER_NAME driver..."
-    sudo rmmod $DRIVER_NAME
-else
-    echo "[1/4] Driver $DRIVER_NAME not loaded, skipping rmmod."
+if [ -z "$DRIVER_PATH" ]; then
+    echo "ERROR: Could not find Tegra PCIe driver in sysfs."
+    exit 1
+fi
+echo "Found Driver Path: $DRIVER_PATH"
+
+# 1. Find the Hardware Address for Domain 0005
+# We scan the Device Tree to match the PCIe domain ID to the controller address (e.g., 141a0000.pcie)
+echo "[1/4] Identifying Controller for Domain $TARGET_DOMAIN_ID..."
+TARGET_CONTROLLER=""
+
+for dt_node in /proc/device-tree/pcie@*; do
+    if [ -f "$dt_node/linux,pci-domain" ]; then
+        # Read the domain ID (Big Endian 32-bit integer)
+        # We use hexdump to extract it safely
+        DOMAIN=$(hexdump -e '1/4 "%u"' "$dt_node/linux,pci-domain")
+        
+        # Check if this matches our target (handle endianness swap if needed, but usually 5 matches 5)
+        # Note: hexdump might print big-endian as a large number on LE systems, 
+        # so we also check the raw hex just in case, or simply check the node name mapping for C5.
+        
+        # Orin C5 is almost always at 141a0000. Let's strictly check the address if domain parsing is tricky in bash.
+        # But let's try a simpler mapping for Orin:
+        # C5 (0005) -> 141a0000.pcie
+        case "$dt_node" in
+            *"141a0000"*)
+                echo "      Found C5 Controller candidate: $dt_node"
+                TARGET_CONTROLLER="141a0000.pcie"
+                ;;
+        esac
+    fi
+done
+
+# Fallback: If we couldn't auto-detect, force C5 address
+if [ -z "$TARGET_CONTROLLER" ]; then
+    echo "      Warning: Auto-detect failed. Assuming default AGX Orin C5 address."
+    TARGET_CONTROLLER="141a0000.pcie"
 fi
 
-# 2. Tell the kernel to forget the device
-if [ -e "/sys/bus/pci/devices/$PCI_ADDR" ]; then
-    echo "[2/4] Removing PCI device $PCI_ADDR from kernel tree..."
-    echo 1 | sudo tee "/sys/bus/pci/devices/$PCI_ADDR/remove" > /dev/null
-else
-    echo "[2/4] Device $PCI_ADDR not found in sysfs, skipping remove."
-fi
+echo "      Targeting Controller: $TARGET_CONTROLLER"
 
-# 3. Rescan the bus
-echo "[3/4] Rescanning PCIe bus (waiting for FPGA to respond)..."
-sleep 1
-echo 1 | sudo tee /sys/bus/pci/rescan > /dev/null
-
-# 4. Final verification and driver loading
-if lspci -s "$PCI_ADDR" | grep -q "Xilinx"; then
-    echo "[4/4] Device detected via lspci. Loading driver..."
-    sudo modprobe $DRIVER_NAME
-
-    # Check if /dev nodes were created
+# 2. Unbind the Controller (Force Power Down)
+if [ -e "$DRIVER_PATH/$TARGET_CONTROLLER" ]; then
+    echo "[2/4] Unbinding controller to reset hardware..."
+    echo "$TARGET_CONTROLLER" | sudo tee "$DRIVER_PATH/unbind" > /dev/null
     sleep 1
-    if ls /dev/xdma* >/dev/null 2>&1; then
-        echo "SUCCESS: XDMA nodes are now available:"
-        ls -l /dev/xdma*
+else
+    echo "[2/4] Controller was already unbound (powered off)."
+fi
+
+# 3. Bind the Controller (Force Power Up & Link Training)
+echo "[3/4] Binding controller (This triggers Link Training)..."
+# Ensure the FPGA is powered ON before this step!
+echo "      (Ensure FPGA is powered ON now)"
+sleep 1
+
+echo "$TARGET_CONTROLLER" | sudo tee "$DRIVER_PATH/bind" > /dev/null
+
+# 4. Verify
+echo "[4/4] Verifying Link..."
+sleep 2
+
+if lspci | grep -q "0005:00:00.0"; then
+    echo "SUCCESS: Bridge 0005:00:00.0 is back!"
+    
+    # Now load the driver if the device is seen
+    if lspci -s "0005:01:00.0" | grep -q "Xilinx"; then
+        echo "SUCCESS: FPGA Detected. Loading XDMA..."
+        sudo modprobe xdma
     else
-        echo "ERROR: Device found, but driver failed to create /dev nodes."
-        echo "Check 'dmesg | tail' for 'Failed to detect XDMA config BAR'."
+        echo "WARNING: Bridge is up, but FPGA endpoint not seen. Rescanning bus..."
+        echo 1 | sudo tee /sys/bus/pci/rescan > /dev/null
+        sleep 1
+        lspci -s "0005:01:00.0"
     fi
 else
-    echo "ERROR: Device $PCI_ADDR not found after rescan."
-    echo "Check FPGA power and bitstream status."
+    echo "ERROR: Controller failed to bind or link did not train."
+    echo "       Check dmesg for 'phy link never came up'."
 fi
 
-echo "--- Sequence Complete ---"
+echo "--- Complete ---"

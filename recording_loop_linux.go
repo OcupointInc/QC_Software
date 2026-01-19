@@ -57,7 +57,7 @@ func performShmRecording() {
 
 	ringData := ring.Data()
 	ringTotal := ring.Total()
-	
+
 	// Start reading from the current Head
 	currentPos := ring.GetHead()
 
@@ -70,7 +70,7 @@ func performShmRecording() {
 		serverState.mu.RUnlock()
 
 		head := ring.GetHead()
-		
+
 		// Calculate how many bytes are available to read
 		var available uint64
 		if head >= currentPos {
@@ -163,10 +163,10 @@ func performXdmRecording() {
 	_, _ = unix.FcntlInt(uintptr(fd), unix.F_SETPIPE_SZ, maxPipeSize)
 
 	const numChannels = 8
-	const bytesPerSample = 4 // 2 byte I + 2 byte Q
+	const bytesPerSample = 4                            // 2 byte I + 2 byte Q
 	const inputBlockSize = numChannels * bytesPerSample // 32 bytes
 
-	const readChunkSize = 4 * 1024 * 1024 // 4MB chunks
+	const readChunkSize = 256 * 1024 * 1024 // 4MB chunks
 
 	// Ensure read buffer is multiple of input block size
 	bufSize := (readChunkSize / inputBlockSize) * inputBlockSize
@@ -181,6 +181,10 @@ func performXdmRecording() {
 	samplesRecorded := 0
 	lastBroadcast := 0
 	captureStart := time.Now()
+
+	// Data rate logging
+	lastLogTime := time.Now()
+	var bytesReadSinceLastLog int64
 
 	// PHASE 1: Fast capture into RAM (all channels, no filtering)
 	for samplesRecorded < samplesTotal {
@@ -205,6 +209,16 @@ func performXdmRecording() {
 		if n == 0 {
 			time.Sleep(1 * time.Millisecond)
 			continue
+		}
+
+		// Update metrics
+		bytesReadSinceLastLog += int64(n)
+		if time.Since(lastLogTime) >= 2*time.Second {
+			duration := time.Since(lastLogTime).Seconds()
+			rateGBps := (float64(bytesReadSinceLastLog) / (1024 * 1024 * 1024)) / duration
+			log.Printf("Data Rate: %.4f GB/s", rateGBps)
+			lastLogTime = time.Now()
+			bytesReadSinceLastLog = 0
 		}
 
 		// Determine valid frames
@@ -309,7 +323,7 @@ func processAndWrite(captureData []byte, samplesRecorded int, recChannels []int,
 	} else {
 		// Filter and write
 		totalFrames := len(captureData) / inputBlockSize
-		filteredData := make([]byte, totalFrames * outputBlockSize)
+		filteredData := make([]byte, totalFrames*outputBlockSize)
 
 		writeStart := time.Now()
 
@@ -341,4 +355,3 @@ func processAndWrite(captureData []byte, samplesRecorded int, recChannels []int,
 	log.Printf("Recording finished. Total samples: %d", samplesRecorded)
 	cleanupRecording("")
 }
-

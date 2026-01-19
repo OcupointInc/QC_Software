@@ -1149,68 +1149,6 @@
         }
     }
 
-    // --- PSU Logic ---
-    async function fetchPSUState() {
-        try {
-            const response = await fetch('/api/psu/state');
-            if (!response.ok) return; // Silent fail on error to avoid log spam
-            
-            const data = await response.json();
-            if (data.outputs && data.outputs.length >= 2) { // Index 1 is Channel 2
-                const ch2 = data.outputs[1]; 
-                
-                const volt = ch2.measured_voltage;
-                const curr = ch2.measured_current;
-                const power = volt * curr;
-                const enabled = ch2.enabled;
-
-                document.getElementById('psu2Volt').innerText = volt.toFixed(3) + " V";
-                document.getElementById('psu2Curr').innerText = curr.toFixed(3) + " A";
-                document.getElementById('psu2Power').innerText = power.toFixed(3) + " W";
-
-                const btn = document.getElementById('psu2Toggle');
-                if (enabled) {
-                    btn.innerText = "ON";
-                    btn.className = "btn-success";
-                } else {
-                    btn.innerText = "OFF";
-                    btn.className = "btn-danger";
-                }
-            }
-        } catch (error) {
-            // Console log occasionally useful but can spam
-            // console.error('Failed to fetch PSU state:', error);
-        }
-    }
-
-    async function togglePSU2() {
-        const btn = document.getElementById('psu2Toggle');
-        const isCurrentlyOn = btn.innerText === "ON";
-        const newState = !isCurrentlyOn;
-
-        try {
-            const response = await fetch('/api/psu/output/2/enable', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: newState })
-            });
-            
-            if (response.ok) {
-                // Update UI immediately for responsiveness, though the polling will also catch it
-                if (newState) {
-                    btn.innerText = "ON";
-                    btn.className = "btn-success";
-                } else {
-                    btn.innerText = "OFF";
-                    btn.className = "btn-danger";
-                }
-            }
-        } catch (error) {
-            console.error('Failed to toggle PSU:', error);
-            alert('Failed to toggle PSU Channel 2');
-        }
-    }
-
     // --- Hardware Control Logic ---
     async function updateHWDDCFrequency(ddcIndex) {
         const freqInput = document.getElementById(`ddc${ddcIndex}FreqInput`);
@@ -1889,12 +1827,10 @@
 
     // Fetch initial values
     fetchSigGenState();
-    fetchPSUState(); // Initial fetch
     fetchSweepState();
     fetchReplayFiles(); // Initial file list fetch
     fetchReplayState(); // Initial replay state fetch
     fetchHardwareState(); // Initial hardware state fetch
-    setInterval(fetchPSUState, 2000); // Poll every 2 seconds
     setInterval(fetchHardwareState, 2000); // Poll hardware state every 2 seconds
 
     window.addEventListener('resize', () => {
