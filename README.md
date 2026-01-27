@@ -26,9 +26,32 @@ Before running the software, you must install the Xilinx XDMA drivers.
 
 For more detailed instructions or troubleshooting, refer to the [Xilinx dma_ip_drivers repository](https://github.com/Xilinx/dma_ip_drivers).
 
+## Hardware Setup and First Power On
+
+The test setup looks like this:
+
+![Test Setup](images/test_setup_qc.jpg)
+
+1.  **Mounting:** The Queens Canyon unit should be mounted upside down. This is because the ADCs and FPGA are heatsinked to the bottom of the system.
+2.  **PCIe Connection:** Connect the PCIe riser cable to your host system (e.g., an AGX Orin).
+3.  **Power Supply:** Connect a power supply that can provide at least 14V and 4A.
+4.  **Initial Startup Sequence:**
+    -   Boot the host system (e.g., AGX Orin).
+    -   Ensure the Xilinx XDMA drivers are installed and loaded.
+    -   Power on the Queens Canyon unit.
+    -   Wait for the unit to draw approximately **14V ~3.5A**. (It will initially draw ~2A before the FPGA is fully initialized).
+5.  **PCIe Reset:** Once initialized, run the application with the reset flag to restart the PCIe bus so the host can detect it:
+    ```bash
+    ./capture_sw -r
+    ```
+    *Note: If you have problems connecting to the device at any time, run it with `-r` to restart the PCIe bus.*
+6.  **Cooling:** A cooling fan or a cooling plate must be applied to the unit to ensure proper thermal management.
+
 ## Building
 
-To build the main application:
+**Note:** Pre-compiled binary releases of the `capture_sw` application are available for download in the "Releases" section of this repository. This allows you to use the software without needing to set up a Go development environment.
+
+To build the main application from source:
 
 ```bash
 go build -o capture_sw .
