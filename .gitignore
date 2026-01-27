@@ -12,3 +12,4 @@ server
 # OS Specific
 .DS_Store
 Thumbs.db
+._.DS_Store
