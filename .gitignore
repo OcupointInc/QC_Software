@@ -8,6 +8,7 @@ data/
 *.log
 capture
 server
+dma
 
 # OS Specific
 .DS_Store
