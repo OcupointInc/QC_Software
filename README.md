@@ -49,10 +49,21 @@ The test setup looks like this:
 
 ## Building
 
-**Note:** Pre-compiled binary releases of the `capture_sw` application are available for download in the "Releases" section of this repository. This allows you to use the software without needing to set up a Go development environment.
+**Quick Start - Use Pre-compiled Binary (Recommended)**
 
-To build the main application from source:
+Pre-compiled binaries for **(NVIDIA AGX Orin)** are available:
 
+**[Download capture_sw v0.1](https://github.com/OcupointInc/QC_Software/releases/download/V0.1/capture_sw)**
+
+Simply download, make it executable, and run:
+```bash
+chmod +x capture_sw
+./capture_sw -server -p 8080
+```
+
+**Build from Source (Optional)**
+
+If you prefer to build the software yourself:
 ```bash
 go build -o capture_sw .
 ```
@@ -67,11 +78,29 @@ The application can run in **CLI Mode** for batch data capture or **Server Mode*
 
 ### CLI Mode (Capture to File)
 
-Capture data directly to a file. You can specify the capture duration or size.
+Capture data directly to a file. You can specify the capture duration or size. You can also provide a hardware configuration file to tune hardware parameters (like DDC frequencies, filters, and attenuation) before the capture starts.
 
 **Examples:**
 
-1.  **Capture 10 seconds of data from channels 1, 2, and 3:**
+1.  **Tune hardware with a config file and capture 5 seconds of data:**
+    ```bash
+    ./capture_sw -o output.bin -c configs/150Mhz_ddc_bypass.json -t 5s
+    ```
+
+2.
+    ```json
+    Example config.json file:
+    {
+        "ddc0_freq_mhz": 150, // 0-2000MHz
+        "attenuation_db": 0, // 0-31, 1db steps
+        "filter": "1ghz", // "500mhz", "1ghz". "2ghz" "bypass"
+        "calibration_mode": false, // Enable and disable cal mode
+        "channels": [1, 2, 3, 4, 5, 6, 7, 8] // the channels to record data for
+    }
+    ```
+
+
+2.  **Capture 10 seconds of data from channels 1, 2, and 3:**
     ```bash
     ./capture_sw -o output.bin -channels 1,2,3 -t 10s
     ```
@@ -109,3 +138,8 @@ Open a browser and navigate to `http://localhost:8080`.
 **Server Flags:**
 - `-server`: Enable server mode.
 - `-p <port>`: Port to listen on (default: 8080).
+
+
+From the server, the user is able to record data, stream the raw data to the webpage, replay existing files, and tune the hardware ddcs, attenuation, calibration mode, filter state.
+
+![Test Setup](images\gui_capture.png)
