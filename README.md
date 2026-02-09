@@ -142,4 +142,4 @@ Open a browser and navigate to `http://localhost:8080`.
 
 From the server, the user is able to record data, stream the raw data to the webpage, replay existing files, and tune the hardware ddcs, attenuation, calibration mode, filter state.
 
-![Test Setup](images\gui_capture.png)
+![Test Setup](images/gui_capture.png)
